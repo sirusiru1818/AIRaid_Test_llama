@@ -34,10 +34,7 @@ if "%PYTHON_OK%"=="O" if "%PIP_OK%"=="O" (
 :: rpc-server 바이너리 재귀 탐색
 set "LLAMA_OK=X"
 if exist "%LLAMA_DIR%" (
-    for /f "delims=" %%F in ('dir /s /b "%LLAMA_DIR%\rpc-server.exe" 2^>nul') do set "LLAMA_OK=O"
-    if "!LLAMA_OK!"=="X" (
-        for /f "delims=" %%F in ('dir /s /b "%LLAMA_DIR%\llama-rpc-server.exe" 2^>nul') do set "LLAMA_OK=O"
-    )
+    for /f "delims=" %%F in ('dir /s /b "%LLAMA_DIR%\rpc-server.exe" "%LLAMA_DIR%\llama-rpc-server.exe" 2^>nul') do set "LLAMA_OK=O"
 )
 
 echo  [환경 점검 결과]
@@ -113,7 +110,7 @@ goto :AFTER_INSTALL
 :AFTER_INSTALL
 echo.
 echo ============================================
-echo  설치 완료! 환경을 다시 점검합니다...
+echo  환경을 다시 점검합니다...
 echo ============================================
 timeout /t 2 /nobreak >nul
 goto :RECHECK
@@ -206,17 +203,17 @@ echo.
 echo  GPU 백엔드를 선택하세요:
 echo.
 echo  [1] CUDA 12 (NVIDIA GPU) - 권장
-echo  [2] Vulkan (AMD / Intel / NVIDIA GPU)
-echo  [3] CPU only (AVX2)
-echo  [4] CPU only (no AVX)
+echo  [2] CUDA 13 (NVIDIA GPU, 최신)
+echo  [3] Vulkan (AMD / Intel / NVIDIA GPU)
+echo  [4] CPU only (x64)
 echo.
 set /p "LLAMA_CHOICE=선택 (1-4): "
 
 set "LLAMA_FILTER="
-if "%LLAMA_CHOICE%"=="1" set "LLAMA_FILTER=cuda.*cu12"
-if "%LLAMA_CHOICE%"=="2" set "LLAMA_FILTER=vulkan"
-if "%LLAMA_CHOICE%"=="3" set "LLAMA_FILTER=avx2"
-if "%LLAMA_CHOICE%"=="4" set "LLAMA_FILTER=noavx"
+if "%LLAMA_CHOICE%"=="1" set "LLAMA_FILTER=cuda-12"
+if "%LLAMA_CHOICE%"=="2" set "LLAMA_FILTER=cuda-13"
+if "%LLAMA_CHOICE%"=="3" set "LLAMA_FILTER=vulkan"
+if "%LLAMA_CHOICE%"=="4" set "LLAMA_FILTER=cpu-x64"
 
 if "%LLAMA_FILTER%"=="" (
     echo [오류] 잘못된 선택입니다.
@@ -226,53 +223,58 @@ if "%LLAMA_FILTER%"=="" (
 
 echo.
 echo [설치] llama.cpp 최신 릴리스 확인 및 다운로드 중...
-echo        (파일 크기가 크므로 시간이 걸릴 수 있습니다)
+echo        시간이 좀 걸릴 수 있습니다
 echo.
 
-:: PowerShell 스크립트를 임시 파일로 생성 후 실행
-set "PS_FILE=%~dp0_dl_llama.ps1"
- > "%PS_FILE%" echo $ErrorActionPreference = 'Stop'
->> "%PS_FILE%" echo try {
->> "%PS_FILE%" echo     $api = Invoke-RestMethod 'https://api.github.com/repos/ggerganov/llama.cpp/releases/latest'
->> "%PS_FILE%" echo     $tag = $api.tag_name
->> "%PS_FILE%" echo     Write-Host ('  최신 버전: ' + $tag)
->> "%PS_FILE%" echo     $filter = '%LLAMA_FILTER%'
->> "%PS_FILE%" echo     $asset = $api.assets ^| Where-Object { $_.name -match "win.*${filter}.*x64" -and $_.name -like '*.zip' } ^| Select-Object -First 1
->> "%PS_FILE%" echo     if (-not $asset) {
->> "%PS_FILE%" echo         $asset = $api.assets ^| Where-Object { $_.name -match "${filter}" -and $_.name -match 'win' -and $_.name -like '*.zip' } ^| Select-Object -First 1
->> "%PS_FILE%" echo     }
->> "%PS_FILE%" echo     if (-not $asset) {
->> "%PS_FILE%" echo         Write-Host '  [오류] 적합한 바이너리를 찾을 수 없습니다'
->> "%PS_FILE%" echo         Write-Host '  GitHub에서 직접 다운로드하세요:'
->> "%PS_FILE%" echo         Write-Host ('  https://github.com/ggerganov/llama.cpp/releases/tag/' + $tag)
->> "%PS_FILE%" echo         exit 1
->> "%PS_FILE%" echo     }
->> "%PS_FILE%" echo     $sizeMB = [math]::Round($asset.size / 1MB, 1)
->> "%PS_FILE%" echo     Write-Host ('  다운로드: ' + $asset.name + ' (' + $sizeMB + ' MB)')
->> "%PS_FILE%" echo     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile '%~dp0llama_dl.zip'
->> "%PS_FILE%" echo     Write-Host '  압축 해제 중...'
->> "%PS_FILE%" echo     if (Test-Path '%LLAMA_DIR%') { Remove-Item '%LLAMA_DIR%' -Recurse -Force }
->> "%PS_FILE%" echo     New-Item -ItemType Directory -Path '%LLAMA_DIR%' -Force ^| Out-Null
->> "%PS_FILE%" echo     Expand-Archive '%~dp0llama_dl.zip' -DestinationPath '%LLAMA_DIR%' -Force
->> "%PS_FILE%" echo     Remove-Item '%~dp0llama_dl.zip' -Force -ErrorAction SilentlyContinue
->> "%PS_FILE%" echo     $found = Get-ChildItem -Path '%LLAMA_DIR%' -Filter 'rpc-server.exe' -Recurse
->> "%PS_FILE%" echo     if (-not $found) {
->> "%PS_FILE%" echo         $found = Get-ChildItem -Path '%LLAMA_DIR%' -Filter 'llama-rpc-server.exe' -Recurse
->> "%PS_FILE%" echo     }
->> "%PS_FILE%" echo     if ($found) {
->> "%PS_FILE%" echo         Write-Host ('  rpc-server 발견: ' + $found[0].FullName)
->> "%PS_FILE%" echo         Write-Host '  llama.cpp 설치 완료!'
->> "%PS_FILE%" echo     } else {
->> "%PS_FILE%" echo         Write-Host '  [경고] rpc-server.exe를 찾을 수 없습니다.'
->> "%PS_FILE%" echo         Write-Host '  llama/ 폴더를 확인하세요.'
->> "%PS_FILE%" echo     }
->> "%PS_FILE%" echo } catch {
->> "%PS_FILE%" echo     Write-Host ('  [오류] ' + $_)
->> "%PS_FILE%" echo     exit 1
->> "%PS_FILE%" echo }
-
-powershell -ExecutionPolicy Bypass -File "%~dp0_dl_llama.ps1"
-del "%~dp0_dl_llama.ps1" 2>nul
+:: PowerShell 인라인 실행 (PS1 파일 생성 없이)
+powershell -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference = 'Stop';" ^
+  "try {" ^
+  "  $api = Invoke-RestMethod 'https://api.github.com/repos/ggerganov/llama.cpp/releases/latest';" ^
+  "  $tag = $api.tag_name;" ^
+  "  Write-Host ('  Latest version: ' + $tag);" ^
+  "  $allZips = $api.assets | Where-Object { $_.name -like '*.zip' -and $_.name -match 'win' };" ^
+  "  $bins = $allZips | Where-Object { $_.name -match '^llama-' };" ^
+  "  $asset = $bins | Where-Object { $_.name -match '%LLAMA_FILTER%' } | Select-Object -First 1;" ^
+  "  if (-not $asset) {" ^
+  "    Write-Host '  [ERROR] No matching binary found for filter: %LLAMA_FILTER%';" ^
+  "    Write-Host '  Available Windows builds:';" ^
+  "    $bins | ForEach-Object { Write-Host ('    - ' + $_.name) };" ^
+  "    Write-Host ('  Download manually: https://github.com/ggerganov/llama.cpp/releases/tag/' + $tag);" ^
+  "    exit 1;" ^
+  "  }" ^
+  "  $sizeMB = [math]::Round($asset.size / 1MB, 1);" ^
+  "  Write-Host ('  Downloading: ' + $asset.name + ' (' + $sizeMB.ToString() + ' MB)');" ^
+  "  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile '%~dp0llama_dl.zip';" ^
+  "  Write-Host '  Extracting...';" ^
+  "  if (Test-Path '%LLAMA_DIR%') { Remove-Item '%LLAMA_DIR%' -Recurse -Force };" ^
+  "  New-Item -ItemType Directory -Path '%LLAMA_DIR%' -Force | Out-Null;" ^
+  "  Expand-Archive '%~dp0llama_dl.zip' -DestinationPath '%LLAMA_DIR%' -Force;" ^
+  "  Remove-Item '%~dp0llama_dl.zip' -Force -ErrorAction SilentlyContinue;" ^
+  "  if ('%LLAMA_FILTER%' -match 'cuda') {" ^
+  "    $cudart = $allZips | Where-Object { $_.name -match '^cudart-' -and $_.name -match '%LLAMA_FILTER%' } | Select-Object -First 1;" ^
+  "    if ($cudart) {" ^
+  "      $rtMB = [math]::Round($cudart.size / 1MB, 1);" ^
+  "      Write-Host ('  Downloading CUDA runtime: ' + $cudart.name + ' (' + $rtMB.ToString() + ' MB)');" ^
+  "      Invoke-WebRequest -Uri $cudart.browser_download_url -OutFile '%~dp0cudart_dl.zip';" ^
+  "      Expand-Archive '%~dp0cudart_dl.zip' -DestinationPath '%LLAMA_DIR%' -Force;" ^
+  "      Remove-Item '%~dp0cudart_dl.zip' -Force -ErrorAction SilentlyContinue;" ^
+  "      Write-Host '  CUDA runtime extracted.';" ^
+  "    }" ^
+  "  }" ^
+  "  $found = Get-ChildItem -Path '%LLAMA_DIR%' -Filter 'rpc-server.exe' -Recurse | Select-Object -First 1;" ^
+  "  if (-not $found) { $found = Get-ChildItem -Path '%LLAMA_DIR%' -Filter 'llama-rpc-server.exe' -Recurse | Select-Object -First 1 };" ^
+  "  if ($found) {" ^
+  "    Write-Host ('  Found: ' + $found.FullName);" ^
+  "    Write-Host '  llama.cpp install complete!';" ^
+  "  } else {" ^
+  "    Write-Host '  [WARN] rpc-server.exe not found. Check llama/ folder.';" ^
+  "    exit 1;" ^
+  "  }" ^
+  "} catch {" ^
+  "  Write-Host ('  [ERROR] ' + $_);" ^
+  "  exit 1;" ^
+  "}"
 
 if errorlevel 1 (
     echo.
