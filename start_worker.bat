@@ -230,51 +230,46 @@ echo        (파일 크기가 크므로 시간이 걸릴 수 있습니다)
 echo.
 
 :: PowerShell 스크립트를 임시 파일로 생성 후 실행
-> "%~dp0_dl_llama.ps1" (
-    echo $ErrorActionPreference = 'Stop'
-    echo try {
-    echo     $api = Invoke-RestMethod 'https://api.github.com/repos/ggerganov/llama.cpp/releases/latest'
-    echo     $tag = $api.tag_name
-    echo     Write-Host "  최신 버전: $tag"
-    echo     $filter = '%LLAMA_FILTER%'
-    echo     $asset = $api.assets ^| Where-Object {
-    echo         $_.name -match "win.*${filter}.*x64" -and $_.name -like '*.zip'
-    echo     } ^| Select-Object -First 1
-    echo     if (-not $asset^) {
-    echo         $asset = $api.assets ^| Where-Object {
-    echo             $_.name -match "${filter}" -and $_.name -match 'win' -and $_.name -like '*.zip'
-    echo         } ^| Select-Object -First 1
-    echo     }
-    echo     if (-not $asset^) {
-    echo         Write-Host '  [오류] 적합한 바이너리를 찾을 수 없습니다'
-    echo         Write-Host '  GitHub에서 직접 다운로드하세요:'
-    echo         Write-Host "  https://github.com/ggerganov/llama.cpp/releases/tag/$tag"
-    echo         exit 1
-    echo     }
-    echo     $sizeMB = [math]::Round($asset.size / 1MB, 1^)
-    echo     Write-Host "  다운로드: $($asset.name^) ($sizeMB MB^)"
-    echo     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile '%~dp0llama_dl.zip'
-    echo     Write-Host '  압축 해제 중...'
-    echo     if (Test-Path '%LLAMA_DIR%'^) { Remove-Item '%LLAMA_DIR%' -Recurse -Force }
-    echo     New-Item -ItemType Directory -Path '%LLAMA_DIR%' -Force ^| Out-Null
-    echo     Expand-Archive '%~dp0llama_dl.zip' -DestinationPath '%LLAMA_DIR%' -Force
-    echo     Remove-Item '%~dp0llama_dl.zip' -Force -ErrorAction SilentlyContinue
-    echo     $found = Get-ChildItem -Path '%LLAMA_DIR%' -Filter 'rpc-server.exe' -Recurse
-    echo     if (-not $found^) {
-    echo         $found = Get-ChildItem -Path '%LLAMA_DIR%' -Filter 'llama-rpc-server.exe' -Recurse
-    echo     }
-    echo     if ($found^) {
-    echo         Write-Host "  rpc-server 발견: $($found[0].FullName^)"
-    echo         Write-Host '  llama.cpp 설치 완료!'
-    echo     } else {
-    echo         Write-Host '  [경고] rpc-server.exe를 찾을 수 없습니다.'
-    echo         Write-Host '  llama/ 폴더를 확인하세요.'
-    echo     }
-    echo } catch {
-    echo     Write-Host "  [오류] $_"
-    echo     exit 1
-    echo }
-)
+set "PS_FILE=%~dp0_dl_llama.ps1"
+ > "%PS_FILE%" echo $ErrorActionPreference = 'Stop'
+>> "%PS_FILE%" echo try {
+>> "%PS_FILE%" echo     $api = Invoke-RestMethod 'https://api.github.com/repos/ggerganov/llama.cpp/releases/latest'
+>> "%PS_FILE%" echo     $tag = $api.tag_name
+>> "%PS_FILE%" echo     Write-Host ('  최신 버전: ' + $tag)
+>> "%PS_FILE%" echo     $filter = '%LLAMA_FILTER%'
+>> "%PS_FILE%" echo     $asset = $api.assets ^| Where-Object { $_.name -match "win.*${filter}.*x64" -and $_.name -like '*.zip' } ^| Select-Object -First 1
+>> "%PS_FILE%" echo     if (-not $asset) {
+>> "%PS_FILE%" echo         $asset = $api.assets ^| Where-Object { $_.name -match "${filter}" -and $_.name -match 'win' -and $_.name -like '*.zip' } ^| Select-Object -First 1
+>> "%PS_FILE%" echo     }
+>> "%PS_FILE%" echo     if (-not $asset) {
+>> "%PS_FILE%" echo         Write-Host '  [오류] 적합한 바이너리를 찾을 수 없습니다'
+>> "%PS_FILE%" echo         Write-Host '  GitHub에서 직접 다운로드하세요:'
+>> "%PS_FILE%" echo         Write-Host ('  https://github.com/ggerganov/llama.cpp/releases/tag/' + $tag)
+>> "%PS_FILE%" echo         exit 1
+>> "%PS_FILE%" echo     }
+>> "%PS_FILE%" echo     $sizeMB = [math]::Round($asset.size / 1MB, 1)
+>> "%PS_FILE%" echo     Write-Host ('  다운로드: ' + $asset.name + ' (' + $sizeMB + ' MB)')
+>> "%PS_FILE%" echo     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile '%~dp0llama_dl.zip'
+>> "%PS_FILE%" echo     Write-Host '  압축 해제 중...'
+>> "%PS_FILE%" echo     if (Test-Path '%LLAMA_DIR%') { Remove-Item '%LLAMA_DIR%' -Recurse -Force }
+>> "%PS_FILE%" echo     New-Item -ItemType Directory -Path '%LLAMA_DIR%' -Force ^| Out-Null
+>> "%PS_FILE%" echo     Expand-Archive '%~dp0llama_dl.zip' -DestinationPath '%LLAMA_DIR%' -Force
+>> "%PS_FILE%" echo     Remove-Item '%~dp0llama_dl.zip' -Force -ErrorAction SilentlyContinue
+>> "%PS_FILE%" echo     $found = Get-ChildItem -Path '%LLAMA_DIR%' -Filter 'rpc-server.exe' -Recurse
+>> "%PS_FILE%" echo     if (-not $found) {
+>> "%PS_FILE%" echo         $found = Get-ChildItem -Path '%LLAMA_DIR%' -Filter 'llama-rpc-server.exe' -Recurse
+>> "%PS_FILE%" echo     }
+>> "%PS_FILE%" echo     if ($found) {
+>> "%PS_FILE%" echo         Write-Host ('  rpc-server 발견: ' + $found[0].FullName)
+>> "%PS_FILE%" echo         Write-Host '  llama.cpp 설치 완료!'
+>> "%PS_FILE%" echo     } else {
+>> "%PS_FILE%" echo         Write-Host '  [경고] rpc-server.exe를 찾을 수 없습니다.'
+>> "%PS_FILE%" echo         Write-Host '  llama/ 폴더를 확인하세요.'
+>> "%PS_FILE%" echo     }
+>> "%PS_FILE%" echo } catch {
+>> "%PS_FILE%" echo     Write-Host ('  [오류] ' + $_)
+>> "%PS_FILE%" echo     exit 1
+>> "%PS_FILE%" echo }
 
 powershell -ExecutionPolicy Bypass -File "%~dp0_dl_llama.ps1"
 del "%~dp0_dl_llama.ps1" 2>nul
