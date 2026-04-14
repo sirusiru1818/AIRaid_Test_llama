@@ -1,10 +1,12 @@
 """
-AIRaid Master Server
-마스터 PC에서 실행하여 워커들의 시스템 상태를 수집하고 대시보드를 제공합니다.
+AIRaid Master Server - Distributed llama.cpp Control Center
+마스터 PC에서 실행: 워커 관리, llama-server 제어, 웹 대시보드 제공
 사용법: python master.py [--port 5555]
 """
 
 import argparse
+import glob as globmod
+import json
 import os
 import platform
 import socket
@@ -14,21 +16,41 @@ import threading
 import time
 
 import psutil
-from flask import Flask, jsonify, request, send_file
+import requests as http_client
+from flask import Flask, Response, jsonify, request, send_file
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HTML_PATH = os.path.join(BASE_DIR, "index.html")
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+LLAMA_DIR = os.path.join(BASE_DIR, "llama")
 
 app = Flask(__name__)
 
+# ── Worker management ──────────────────────────
 workers = {}
 workers_lock = threading.Lock()
+worker_commands = {}
+worker_commands_lock = threading.Lock()
 WORKER_TIMEOUT = 15
 
+# ── llama-server process ───────────────────────
+llama_proc = None
+llama_proc_lock = threading.Lock()
+llama_log_lines = []
+llama_log_lock = threading.Lock()
+MAX_LOG_LINES = 500
 
-# ──────────────────────────────────────────────
-#  시스템 정보 수집
-# ──────────────────────────────────────────────
+llama_state = {
+    "running": False,
+    "ready": False,
+    "pid": None,
+    "started_at": None,
+    "model": None,
+    "port": 8080,
+}
+
+
+# ── System info ────────────────────────────────
 
 def get_local_ip():
     try:
@@ -99,13 +121,13 @@ def collect_master_loop():
                     "freq_mhz": round(cpu_freq.current, 0) if cpu_freq else 0,
                 },
                 "ram": {
-                    "total_gb": round(mem.total / (1024**3), 2),
-                    "used_gb": round(mem.used / (1024**3), 2),
+                    "total_gb": round(mem.total / (1024 ** 3), 2),
+                    "used_gb": round(mem.used / (1024 ** 3), 2),
                     "percent": mem.percent,
                 },
                 "disk": {
-                    "total_gb": round(disk.total / (1024**3), 1) if disk else 0,
-                    "used_gb": round(disk.used / (1024**3), 1) if disk else 0,
+                    "total_gb": round(disk.total / (1024 ** 3), 1) if disk else 0,
+                    "used_gb": round(disk.used / (1024 ** 3), 1) if disk else 0,
                     "percent": round(disk.percent, 1) if disk else 0,
                 },
                 "gpus": get_gpu_info(),
@@ -118,9 +140,304 @@ def collect_master_loop():
         time.sleep(2)
 
 
-# ──────────────────────────────────────────────
-#  API 라우트
-# ──────────────────────────────────────────────
+# ── Model helpers ──────────────────────────────
+
+def scan_models():
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    models = []
+    for f in globmod.glob(os.path.join(MODELS_DIR, "**", "*.gguf"), recursive=True):
+        st = os.stat(f)
+        models.append({
+            "name": os.path.basename(f),
+            "path": f,
+            "size_gb": round(st.st_size / (1024 ** 3), 2),
+        })
+    models.sort(key=lambda x: x["name"])
+    return models
+
+
+# ── Model presets & download ───────────────────
+
+MODEL_PRESETS = [
+    {
+        "id": "llama-3.1-8b-q4km",
+        "name": "Llama 3.1 8B Instruct",
+        "quant": "Q4_K_M",
+        "size_gb": 4.9,
+        "vram_gb": 6,
+        "description": "가벼운 모델 · 단일 GPU로 실행 가능",
+        "recommended": {"ctx_size": 8192, "n_gpu_layers": -1},
+        "files": [
+            {"url": "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+             "name": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"},
+        ],
+    },
+    {
+        "id": "llama-3.1-8b-q8",
+        "name": "Llama 3.1 8B Instruct",
+        "quant": "Q8_0",
+        "size_gb": 8.5,
+        "vram_gb": 10,
+        "description": "8B 고품질 양자화 · 단일 GPU",
+        "recommended": {"ctx_size": 8192, "n_gpu_layers": -1},
+        "files": [
+            {"url": "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf",
+             "name": "Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"},
+        ],
+    },
+    {
+        "id": "llama-3.1-70b-q4km",
+        "name": "Llama 3.1 70B Instruct",
+        "quant": "Q4_K_M",
+        "size_gb": 40.8,
+        "vram_gb": 44,
+        "description": "고성능 모델 · 분산 추론 권장 (2~3 GPU)",
+        "recommended": {"ctx_size": 4096, "n_gpu_layers": -1},
+        "files": [
+            {"url": "https://huggingface.co/bartowski/Meta-Llama-3.1-70B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-70B-Instruct-Q4_K_M.gguf",
+             "name": "Meta-Llama-3.1-70B-Instruct-Q4_K_M.gguf"},
+        ],
+    },
+    {
+        "id": "llama-3.1-405b-q4km",
+        "name": "Llama 3.1 405B Instruct",
+        "quant": "Q4_K_M",
+        "size_gb": 235,
+        "vram_gb": 250,
+        "description": "최대 모델 · 다중 GPU 분산 필수 (8+ GPU)",
+        "recommended": {"ctx_size": 2048, "n_gpu_layers": -1},
+        "files": [
+            {"url": f"https://huggingface.co/bartowski/Meta-Llama-3.1-405B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-405B-Instruct-Q4_K_M/Meta-Llama-3.1-405B-Instruct-Q4_K_M-{i:05d}-of-00009.gguf",
+             "name": f"Meta-Llama-3.1-405B-Instruct-Q4_K_M-{i:05d}-of-00009.gguf"}
+            for i in range(1, 10)
+        ],
+    },
+]
+
+download_state = {
+    "active": False,
+    "preset_id": None,
+    "preset_name": "",
+    "current_file": "",
+    "file_index": 0,
+    "total_files": 0,
+    "downloaded_bytes": 0,
+    "total_bytes": 0,
+    "speed_bps": 0,
+    "error": None,
+}
+_download_lock = threading.Lock()
+_download_cancel = threading.Event()
+
+
+def _download_worker(preset):
+    files = preset["files"]
+    with _download_lock:
+        download_state.update({
+            "active": True, "preset_id": preset["id"],
+            "preset_name": preset["name"], "file_index": 0,
+            "total_files": len(files), "error": None,
+            "downloaded_bytes": 0, "total_bytes": 0, "speed_bps": 0,
+        })
+    _download_cancel.clear()
+
+    for idx, finfo in enumerate(files):
+        if _download_cancel.is_set():
+            break
+
+        url, fname = finfo["url"], finfo["name"]
+        dest = os.path.join(MODELS_DIR, fname)
+
+        if os.path.exists(dest):
+            fsize = os.path.getsize(dest)
+            with _download_lock:
+                download_state.update({
+                    "current_file": fname, "file_index": idx + 1,
+                    "downloaded_bytes": fsize, "total_bytes": fsize,
+                })
+            continue
+
+        with _download_lock:
+            download_state.update({
+                "current_file": fname, "file_index": idx + 1,
+                "downloaded_bytes": 0, "total_bytes": 0, "speed_bps": 0,
+            })
+
+        part_path = dest + ".part"
+        try:
+            resp = http_client.get(url, stream=True, timeout=30,
+                                   headers={"User-Agent": "AIRaid/1.0"})
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length", 0))
+            with _download_lock:
+                download_state["total_bytes"] = total
+
+            downloaded = 0
+            t0 = time.time()
+            last_t, last_b = t0, 0
+
+            with open(part_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    if _download_cancel.is_set():
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    now = time.time()
+                    dt = now - last_t
+                    if dt >= 0.5:
+                        speed = (downloaded - last_b) / dt
+                        last_t, last_b = now, downloaded
+                        with _download_lock:
+                            download_state["speed_bps"] = speed
+                    with _download_lock:
+                        download_state["downloaded_bytes"] = downloaded
+
+            if _download_cancel.is_set():
+                if os.path.exists(part_path):
+                    os.remove(part_path)
+                break
+
+            os.rename(part_path, dest)
+            print(f"[다운로드] 완료: {fname}")
+
+        except Exception as e:
+            if os.path.exists(part_path):
+                os.remove(part_path)
+            with _download_lock:
+                download_state.update({"error": str(e), "active": False})
+            print(f"[다운로드 오류] {fname}: {e}")
+            return
+
+    with _download_lock:
+        download_state["active"] = False
+    if not _download_cancel.is_set():
+        print(f"[다운로드] 프리셋 완료: {preset['name']}")
+
+
+def find_binary(name):
+    """LLAMA_DIR 안에서 바이너리를 재귀 검색 (.exe 포함)."""
+    candidates = {name.lower(), (name + ".exe").lower()}
+    for root, _dirs, files in os.walk(LLAMA_DIR):
+        for fn in files:
+            if fn.lower() in candidates:
+                return os.path.join(root, fn)
+    return None
+
+
+# ── llama-server management ────────────────────
+
+def _log_reader(stream):
+    try:
+        for line in iter(stream.readline, b""):
+            text = line.decode("utf-8", errors="replace").rstrip()
+            with llama_log_lock:
+                llama_log_lines.append(text)
+                if len(llama_log_lines) > MAX_LOG_LINES:
+                    del llama_log_lines[: len(llama_log_lines) - MAX_LOG_LINES]
+    except Exception:
+        pass
+
+
+def _health_checker():
+    """llama-server /health 엔드포인트를 주기적으로 확인."""
+    while True:
+        time.sleep(3)
+        if not llama_state.get("running"):
+            llama_state["ready"] = False
+            continue
+        try:
+            r = http_client.get(
+                f"http://127.0.0.1:{llama_state['port']}/health", timeout=2
+            )
+            llama_state["ready"] = r.status_code == 200
+        except Exception:
+            llama_state["ready"] = False
+
+
+def start_llama(config):
+    global llama_proc
+    with llama_proc_lock:
+        if llama_proc and llama_proc.poll() is None:
+            return False, "llama-server가 이미 실행 중입니다"
+
+        exe = find_binary("llama-server")
+        if not exe:
+            return False, "llama-server 바이너리를 찾을 수 없습니다 (llama/ 폴더 확인)"
+
+        model_path = config.get("model")
+        if not model_path or not os.path.exists(model_path):
+            return False, f"모델 파일을 찾을 수 없습니다: {model_path}"
+
+        port = int(config.get("port", 8080))
+        ctx = int(config.get("ctx_size", 4096))
+        ngl = int(config.get("n_gpu_layers", -1))
+
+        cmd = [
+            exe, "-m", model_path,
+            "--host", "0.0.0.0",
+            "--port", str(port),
+            "-c", str(ctx),
+            "-ngl", str(ngl),
+        ]
+
+        threads = int(config.get("threads", 0))
+        if threads > 0:
+            cmd.extend(["-t", str(threads)])
+
+        rpc = config.get("rpc_workers", [])
+        if rpc:
+            cmd.extend(["--rpc", ",".join(rpc)])
+
+        extra = config.get("extra_args", "").strip()
+        if extra:
+            cmd.extend(extra.split())
+
+        with llama_log_lock:
+            llama_log_lines.clear()
+
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1,
+            )
+            llama_proc = proc
+            llama_state.update({
+                "running": True, "ready": False, "pid": proc.pid,
+                "started_at": time.time(),
+                "model": os.path.basename(model_path),
+                "port": port,
+            })
+            threading.Thread(target=_log_reader, args=(proc.stdout,), daemon=True).start()
+            return True, f"llama-server 시작됨 (PID {proc.pid})"
+        except Exception as e:
+            return False, f"실행 오류: {e}"
+
+
+def stop_llama():
+    global llama_proc
+    with llama_proc_lock:
+        if llama_proc and llama_proc.poll() is None:
+            llama_proc.terminate()
+            try:
+                llama_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                llama_proc.kill()
+            llama_proc = None
+            llama_state.update({"running": False, "ready": False, "pid": None, "started_at": None})
+            return True, "llama-server 중지됨"
+        llama_proc = None
+        llama_state.update({"running": False, "ready": False})
+        return False, "실행 중인 서버가 없습니다"
+
+
+def check_llama_alive():
+    global llama_proc
+    with llama_proc_lock:
+        if llama_proc and llama_proc.poll() is not None:
+            llama_proc = None
+            llama_state.update({"running": False, "ready": False, "pid": None})
+
+
+# ── Flask routes ───────────────────────────────
 
 @app.route("/")
 def dashboard():
@@ -134,37 +451,158 @@ def receive_report():
     data["role"] = "worker"
     with workers_lock:
         workers[ip] = data
-    return jsonify({"status": "ok"})
+
+    with worker_commands_lock:
+        cmds = worker_commands.pop(ip, [])
+
+    return jsonify({"status": "ok", "commands": cmds})
 
 
 @app.route("/api/stats")
 def get_all_stats():
     now = time.time()
+    check_llama_alive()
+
     with master_stats_lock:
         master = dict(master_stats)
 
     with workers_lock:
         active = {}
-        stale_keys = []
-        for ip, stats in workers.items():
-            if now - stats.get("timestamp", 0) < WORKER_TIMEOUT:
-                active[ip] = stats
+        stale = []
+        for ip, s in workers.items():
+            if now - s.get("timestamp", 0) < WORKER_TIMEOUT:
+                active[ip] = s
             else:
-                stale_keys.append(ip)
-        for k in stale_keys:
+                stale.append(ip)
+        for k in stale:
             del workers[k]
 
-    return jsonify({"master": master, "workers": active})
+    return jsonify({
+        "master": master,
+        "workers": active,
+        "llama": dict(llama_state),
+    })
 
 
-# ──────────────────────────────────────────────
-#  메인
-# ──────────────────────────────────────────────
+@app.route("/api/models")
+def list_models():
+    return jsonify({"models": scan_models()})
+
+
+@app.route("/api/presets")
+def get_presets():
+    downloaded = {m["name"] for m in scan_models()}
+    result = []
+    for p in MODEL_PRESETS:
+        info = {k: v for k, v in p.items() if k != "files"}
+        info["file_count"] = len(p["files"])
+        info["downloaded"] = all(f["name"] in downloaded for f in p["files"])
+        if info["downloaded"]:
+            info["model_path"] = os.path.join(MODELS_DIR, p["files"][0]["name"])
+        result.append(info)
+    return jsonify({"presets": result})
+
+
+@app.route("/api/download/start", methods=["POST"])
+def api_download_start():
+    data = request.get_json(force=True)
+    pid = data.get("preset_id")
+    preset = next((p for p in MODEL_PRESETS if p["id"] == pid), None)
+    if not preset:
+        return jsonify({"success": False, "message": "프리셋을 찾을 수 없습니다"})
+    if download_state["active"]:
+        return jsonify({"success": False, "message": "이미 다운로드가 진행 중입니다"})
+    threading.Thread(target=_download_worker, args=(preset,), daemon=True).start()
+    return jsonify({"success": True, "message": f"{preset['name']} 다운로드 시작"})
+
+
+@app.route("/api/download/status")
+def api_download_status():
+    with _download_lock:
+        return jsonify(dict(download_state))
+
+
+@app.route("/api/download/cancel", methods=["POST"])
+def api_download_cancel():
+    _download_cancel.set()
+    return jsonify({"success": True, "message": "다운로드 취소 요청됨"})
+
+
+@app.route("/api/llama/status")
+def api_llama_status():
+    check_llama_alive()
+    with llama_log_lock:
+        logs = list(llama_log_lines[-100:])
+    return jsonify({**llama_state, "logs": logs})
+
+
+@app.route("/api/llama/start", methods=["POST"])
+def api_llama_start():
+    cfg = request.get_json(force=True)
+    ok, msg = start_llama(cfg)
+    return jsonify({"success": ok, "message": msg})
+
+
+@app.route("/api/llama/stop", methods=["POST"])
+def api_llama_stop():
+    ok, msg = stop_llama()
+    return jsonify({"success": ok, "message": msg})
+
+
+@app.route("/api/llama/logs")
+def api_llama_logs():
+    with llama_log_lock:
+        return jsonify({"logs": list(llama_log_lines[-200:])})
+
+
+@app.route("/api/llama/chat", methods=["POST"])
+def proxy_chat():
+    check_llama_alive()
+    if not llama_state.get("running"):
+        return jsonify({"error": "llama-server가 실행 중이 아닙니다"}), 503
+
+    port = llama_state.get("port", 8080)
+    data = request.get_json(force=True)
+    stream = data.get("stream", False)
+    target = f"http://127.0.0.1:{port}/v1/chat/completions"
+
+    try:
+        if stream:
+            resp = http_client.post(target, json=data, stream=True, timeout=300)
+            return Response(
+                resp.iter_content(chunk_size=None),
+                content_type=resp.headers.get("Content-Type", "text/event-stream"),
+            )
+        else:
+            resp = http_client.post(target, json=data, timeout=120)
+            return jsonify(resp.json())
+    except http_client.ConnectionError:
+        return jsonify({"error": "llama-server에 연결할 수 없습니다 (모델 로딩 중일 수 있음)"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/workers/<path:ip>/rpc", methods=["POST"])
+def worker_rpc_control(ip):
+    data = request.get_json(force=True)
+    with worker_commands_lock:
+        worker_commands.setdefault(ip, []).append({
+            "type": "rpc",
+            "action": data.get("action", "start"),
+            "port": int(data.get("port", 50052)),
+        })
+    return jsonify({"status": "queued"})
+
+
+# ── Main ───────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="AIRaid Master Server")
     parser.add_argument("--port", type=int, default=5555, help="서버 포트 (기본: 5555)")
     args = parser.parse_args()
+
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    os.makedirs(LLAMA_DIR, exist_ok=True)
 
     local_ip = get_local_ip()
 
@@ -173,13 +611,16 @@ def main():
         sys.exit(1)
 
     threading.Thread(target=collect_master_loop, daemon=True).start()
+    threading.Thread(target=_health_checker, daemon=True).start()
 
-    print("=" * 50)
-    print("  AIRaid Master Server")
-    print("=" * 50)
+    print("=" * 58)
+    print("  AIRaid Master - Distributed llama.cpp Control Center")
+    print("=" * 58)
     print(f"  대시보드  : http://{local_ip}:{args.port}")
+    print(f"  모델 폴더 : {MODELS_DIR}")
+    print(f"  llama 폴더: {LLAMA_DIR}")
     print(f"  워커 연결 : python worker.py --master http://{local_ip}:{args.port}")
-    print("=" * 50)
+    print("=" * 58)
     print()
 
     app.run(host="0.0.0.0", port=args.port, debug=False)
