@@ -518,8 +518,12 @@ function updateServerStatus(llama){
     ind.innerHTML=`<span class="status-dot on"></span>LLM Ready`;
     startBtn.disabled=true; stopBtn.disabled=false;
   } else if(llama.running){
-    ss.innerHTML=`<span class="status-dot loading"></span><div><div class="ss-label" style="color:var(--yellow)">모델 로딩 중...</div><div class="ss-detail">모델: ${llama.model||'-'} · PID: ${llama.pid}</div></div>`;
-    ind.innerHTML=`<span class="status-dot loading"></span>로딩 중`;
+    const phase=llama.loading_phase||'starting';
+    const pct=llama.loading_progress||0;
+    const phaseNames={starting:'서버 시작 중...',fitting:'메모리 배치 계산 중...',loading:'모델 텐서 로딩 중...',warmup:'모델 워밍업 중...',ready:'준비 완료!'};
+    const phaseName=phaseNames[phase]||'로딩 중...';
+    ss.innerHTML=`<span class="status-dot loading"></span><div style="flex:1"><div class="ss-label" style="color:var(--yellow)">${phaseName}</div><div class="ss-detail">모델: ${llama.model||'-'} · PID: ${llama.pid}</div><div style="margin-top:8px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:.72rem;color:var(--text-dim)">${phaseName}</span><span style="font-size:.72rem;font-weight:600;color:var(--accent)">${pct}%</span></div><div class="bar-wrap" style="height:6px"><div class="bar purple" style="width:${pct}%;transition:width .3s"></div></div></div></div>`;
+    ind.innerHTML=`<span class="status-dot loading"></span>로딩 ${pct}%`;
     startBtn.disabled=true; stopBtn.disabled=false;
   } else {
     ss.innerHTML=`<span class="status-dot off"></span><div><div class="ss-label">서버 중지됨</div><div class="ss-detail">시작하려면 모델을 선택하고 시작 버튼을 누르세요</div></div>`;

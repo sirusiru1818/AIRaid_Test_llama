@@ -9,6 +9,7 @@ import glob as globmod
 import json
 import os
 import platform
+import re
 import socket
 import subprocess
 import sys
@@ -47,6 +48,10 @@ llama_state = {
     "started_at": None,
     "model": None,
     "port": 8080,
+    "loading_phase": "idle",
+    "loading_progress": 0,
+    "total_tensors": 0,
+    "loaded_tensors": 0,
 }
 
 
@@ -326,14 +331,52 @@ def find_binary(name):
 
 # ── llama-server management ────────────────────
 
+def _parse_log_phase(text):
+    """로그 한 줄을 분석해서 llama_state의 로딩 단계/진행률을 갱신."""
+    m = re.search(r"(\d+)\s+tensors", text)
+    if m and "loaded meta data" in text:
+        llama_state["total_tensors"] = int(m.group(1))
+
+    if "fitting params to device memory" in text:
+        llama_state["loading_phase"] = "fitting"
+        llama_state["loading_progress"] = 5
+    elif "load_tensors: loading model tensors" in text:
+        llama_state["loading_phase"] = "loading"
+        llama_state["loaded_tensors"] = 0
+        llama_state["loading_progress"] = 10
+    elif "warming up the model" in text:
+        llama_state["loading_phase"] = "warmup"
+        llama_state["loading_progress"] = 95
+    elif "all slots are idle" in text or "HTTP server listening" in text:
+        llama_state["loading_phase"] = "ready"
+        llama_state["loading_progress"] = 100
+
+
 def _log_reader(stream):
+    """llama-server stdout를 문자 단위로 읽어 로그 저장 + 로딩 진행률 추적."""
+    buf = bytearray()
     try:
-        for line in iter(stream.readline, b""):
-            text = line.decode("utf-8", errors="replace").rstrip()
-            with llama_log_lock:
-                llama_log_lines.append(text)
-                if len(llama_log_lines) > MAX_LOG_LINES:
-                    del llama_log_lines[: len(llama_log_lines) - MAX_LOG_LINES]
+        while True:
+            ch = stream.read(1)
+            if not ch:
+                break
+            if ch in (b"\n", b"\r"):
+                if buf:
+                    text = buf.decode("utf-8", errors="replace").rstrip()
+                    buf.clear()
+                    _parse_log_phase(text)
+                    with llama_log_lock:
+                        llama_log_lines.append(text)
+                        if len(llama_log_lines) > MAX_LOG_LINES:
+                            del llama_log_lines[: len(llama_log_lines) - MAX_LOG_LINES]
+            else:
+                buf += ch
+                if ch == b"." and llama_state.get("loading_phase") == "loading":
+                    llama_state["loaded_tensors"] = llama_state.get("loaded_tensors", 0) + 1
+                    total = llama_state.get("total_tensors", 0)
+                    if total > 0:
+                        pct = min(10 + round(llama_state["loaded_tensors"] / total * 80), 90)
+                        llama_state["loading_progress"] = pct
     except Exception:
         pass
 
@@ -349,7 +392,11 @@ def _health_checker():
             r = http_client.get(
                 f"http://127.0.0.1:{llama_state['port']}/health", timeout=2
             )
-            llama_state["ready"] = r.status_code == 200
+            ready = r.status_code == 200
+            llama_state["ready"] = ready
+            if ready and llama_state.get("loading_phase") != "ready":
+                llama_state["loading_phase"] = "ready"
+                llama_state["loading_progress"] = 100
         except Exception:
             llama_state["ready"] = False
 
@@ -405,6 +452,10 @@ def start_llama(config):
                 "started_at": time.time(),
                 "model": os.path.basename(model_path),
                 "port": port,
+                "loading_phase": "starting",
+                "loading_progress": 0,
+                "total_tensors": 0,
+                "loaded_tensors": 0,
             })
             threading.Thread(target=_log_reader, args=(proc.stdout,), daemon=True).start()
             return True, f"llama-server 시작됨 (PID {proc.pid})"
@@ -422,10 +473,16 @@ def stop_llama():
             except subprocess.TimeoutExpired:
                 llama_proc.kill()
             llama_proc = None
-            llama_state.update({"running": False, "ready": False, "pid": None, "started_at": None})
+            llama_state.update({
+                "running": False, "ready": False, "pid": None, "started_at": None,
+                "loading_phase": "idle", "loading_progress": 0,
+            })
             return True, "llama-server 중지됨"
         llama_proc = None
-        llama_state.update({"running": False, "ready": False})
+        llama_state.update({
+            "running": False, "ready": False,
+            "loading_phase": "idle", "loading_progress": 0,
+        })
         return False, "실행 중인 서버가 없습니다"
 
 
@@ -434,7 +491,10 @@ def check_llama_alive():
     with llama_proc_lock:
         if llama_proc and llama_proc.poll() is not None:
             llama_proc = None
-            llama_state.update({"running": False, "ready": False, "pid": None})
+            llama_state.update({
+                "running": False, "ready": False, "pid": None,
+                "loading_phase": "idle", "loading_progress": 0,
+            })
 
 
 # ── Flask routes ───────────────────────────────
