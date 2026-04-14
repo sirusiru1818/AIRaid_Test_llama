@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIRaid Monitor</title>
+<style>
+:root {
+  --bg-primary: #0b0e17;
+  --bg-card: rgba(255,255,255,0.04);
+  --bg-card-master: rgba(124,58,237,0.08);
+  --border: rgba(255,255,255,0.08);
+  --border-master: rgba(124,58,237,0.3);
+  --text: #e2e8f0;
+  --text-dim: rgba(255,255,255,0.5);
+  --accent: #a78bfa;
+  --accent2: #60a5fa;
+  --green: #34d399;
+  --yellow: #fbbf24;
+  --red: #f87171;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 24px;
+}
+
+/* ── 헤더 ── */
+.header { text-align:center; margin-bottom:32px; }
+.header h1 {
+  font-size:2rem; font-weight:700;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+}
+.header .subtitle { color:var(--text-dim); font-size:0.9rem; margin-top:6px; }
+.live-dot {
+  display:inline-block; width:8px; height:8px;
+  background:var(--green); border-radius:50%; margin-right:6px;
+  animation:pulse 2s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ── 요약 ── */
+.stats-summary {
+  display:flex; justify-content:center; gap:24px;
+  margin-bottom:28px; flex-wrap:wrap;
+}
+.stat-pill {
+  background:rgba(255,255,255,0.04);
+  border:1px solid var(--border);
+  border-radius:12px; padding:12px 20px; text-align:center;
+  min-width:110px;
+}
+.stat-pill .num {
+  font-size:1.4rem; font-weight:700;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+}
+.stat-pill .label { font-size:0.72rem; color:var(--text-dim); margin-top:2px; }
+
+/* ── 카드 그리드 ── */
+.grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(400px, 1fr));
+  gap:20px; max-width:1600px; margin:0 auto;
+}
+.card {
+  background:var(--bg-card);
+  border:1px solid var(--border);
+  border-radius:16px; padding:24px;
+  transition:transform .15s, border-color .15s;
+}
+.card:hover { transform:translateY(-2px); border-color:rgba(255,255,255,0.15); }
+.card.master { background:var(--bg-card-master); border-color:var(--border-master); }
+
+.card-header {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:18px;
+}
+.card-header .info h2 { font-size:1.15rem; font-weight:600; }
+.card-header .info .meta { font-size:0.78rem; color:var(--text-dim); margin-top:2px; }
+
+.badge {
+  font-size:0.7rem; font-weight:600; padding:4px 10px;
+  border-radius:20px; text-transform:uppercase; letter-spacing:.5px;
+}
+.badge.master-b { background:rgba(124,58,237,0.25); color:var(--accent); }
+.badge.worker-b { background:rgba(96,165,250,0.15); color:var(--accent2); }
+
+/* ── 섹션 / 메트릭 ── */
+.section { margin-bottom:14px; }
+.section:last-child { margin-bottom:0; }
+.section-title {
+  font-size:0.75rem; font-weight:600; color:var(--text-dim);
+  text-transform:uppercase; letter-spacing:.8px; margin-bottom:8px;
+}
+.metric-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
+.metric-label { font-size:0.85rem; }
+.metric-value { font-size:0.85rem; font-weight:600; font-variant-numeric:tabular-nums; }
+
+.bar-wrap {
+  width:100%; height:6px;
+  background:rgba(255,255,255,0.06);
+  border-radius:3px; margin-top:3px; margin-bottom:6px; overflow:hidden;
+}
+.bar { height:100%; border-radius:3px; transition:width .6s ease; }
+.bar.green  { background:linear-gradient(90deg,#34d399,#6ee7b7); }
+.bar.yellow { background:linear-gradient(90deg,#fbbf24,#fde68a); }
+.bar.red    { background:linear-gradient(90deg,#f87171,#fca5a5); }
+.bar.blue   { background:linear-gradient(90deg,var(--accent2),#93c5fd); }
+.bar.purple { background:linear-gradient(90deg,var(--accent),#c4b5fd); }
+
+/* ── GPU 카드 ── */
+.gpu-card {
+  background:rgba(255,255,255,0.03);
+  border:1px solid rgba(255,255,255,0.06);
+  border-radius:10px; padding:12px; margin-bottom:8px;
+}
+.gpu-card:last-child { margin-bottom:0; }
+.gpu-name { font-size:0.8rem; font-weight:600; color:var(--accent); }
+.gpu-temp { font-size:0.75rem; padding:2px 8px; border-radius:8px; font-weight:600; }
+
+.no-data {
+  text-align:center; color:var(--text-dim);
+  padding:60px 20px; font-size:0.95rem;
+  grid-column: 1 / -1;
+}
+.footer-note {
+  font-size:0.7rem; color:var(--text-dim);
+  text-align:center; margin-top:20px;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>AIRaid Monitor</h1>
+  <div class="subtitle"><span class="live-dot"></span>실시간 시스템 모니터링</div>
+</div>
+
+<div class="stats-summary" id="summary"></div>
+<div class="grid" id="grid"><div class="no-data">데이터를 불러오는 중...</div></div>
+<div class="footer-note" id="footer"></div>
+
+<script>
+const REFRESH = 2000;
+const TIMEOUT = 15;
+
+function bc(p){ return p<60?'green':p<85?'yellow':'red'; }
+function tc(c){
+  if(c<60) return {bg:'rgba(52,211,153,.15)',c:'#34d399'};
+  if(c<80) return {bg:'rgba(251,191,36,.15)',c:'#fbbf24'};
+  return {bg:'rgba(248,113,113,.15)',c:'#f87171'};
+}
+function ago(ts){
+  const d=Math.floor(Date.now()/1000-ts);
+  if(d<5)return'방금'; if(d<60)return d+'초 전'; return Math.floor(d/60)+'분 전';
+}
+
+function metric(label,value,pct,cls){
+  const c=cls||bc(pct);
+  return`<div class="metric-row"><span class="metric-label">${label}</span><span class="metric-value">${value}</span></div><div class="bar-wrap"><div class="bar ${c}" style="width:${Math.min(pct,100)}%"></div></div>`;
+}
+
+function gpuHtml(g){
+  const vp=g.memory_total_mb>0?Math.round(g.memory_used_mb/g.memory_total_mb*100):0;
+  const t=tc(g.temperature_c);
+  return`<div class="gpu-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span class="gpu-name">GPU ${g.index}: ${g.name}</span><span class="gpu-temp" style="background:${t.bg};color:${t.c}">${g.temperature_c}°C</span></div>${metric('사용률',g.gpu_util_percent+'%',g.gpu_util_percent,'purple')}<div style="height:4px"></div>${metric('VRAM',g.memory_used_mb+' / '+g.memory_total_mb+' MB',vp,'blue')}</div>`;
+}
+
+function card(d,isMaster){
+  const cls=isMaster?'card master':'card';
+  const badge=isMaster?'<span class="badge master-b">MASTER</span>':'<span class="badge worker-b">WORKER</span>';
+  const cpu=d.cpu||{}, ram=d.ram||{}, disk=d.disk||{}, gpus=d.gpus||[];
+  let gSec='';
+  if(gpus.length) gSec=`<div class="section"><div class="section-title">GPU</div>${gpus.map(gpuHtml).join('')}</div>`;
+  else gSec=`<div class="section"><div class="section-title">GPU</div><div style="color:var(--text-dim);font-size:.8rem">GPU 없음 또는 감지 불가</div></div>`;
+
+  return`<div class="${cls}"><div class="card-header"><div class="info"><h2>${d.hostname||'알 수 없음'}</h2><div class="meta">${d.ip||''} · ${d.os||''} · ${ago(d.timestamp)}</div></div>${badge}</div><div class="section"><div class="section-title">CPU (${cpu.count_physical||'?'}코어 / ${cpu.count_logical||'?'}스레드 · ${cpu.freq_mhz||0} MHz)</div>${metric('사용률',(cpu.percent||0)+'%',cpu.percent||0)}</div><div class="section"><div class="section-title">RAM</div>${metric('사용량',(ram.used_gb||0)+' / '+(ram.total_gb||0)+' GB',ram.percent||0)}</div><div class="section"><div class="section-title">DISK</div>${metric('사용량',(disk.used_gb||0)+' / '+(disk.total_gb||0)+' GB',disk.percent||0)}</div>${gSec}</div>`;
+}
+
+function summary(m,ws){
+  const wl=Object.values(ws), total=1+wl.length;
+  let gpus=(m.gpus||[]).length, ram=m.ram?m.ram.total_gb:0, vram=0;
+  (m.gpus||[]).forEach(g=>vram+=g.memory_total_mb);
+  wl.forEach(w=>{gpus+=(w.gpus||[]).length; if(w.ram)ram+=w.ram.total_gb; (w.gpus||[]).forEach(g=>vram+=g.memory_total_mb);});
+  const vStr=vram>1024?(vram/1024).toFixed(1)+' GB':vram+' MB';
+  return`<div class="stat-pill"><div class="num">${total}</div><div class="label">전체 머신</div></div><div class="stat-pill"><div class="num">${wl.length}</div><div class="label">워커</div></div><div class="stat-pill"><div class="num">${gpus}</div><div class="label">GPU</div></div><div class="stat-pill"><div class="num">${ram.toFixed(1)} GB</div><div class="label">전체 RAM</div></div><div class="stat-pill"><div class="num">${vStr}</div><div class="label">전체 VRAM</div></div>`;
+}
+
+async function refresh(){
+  try{
+    const r=await fetch('/api/stats');
+    const d=await r.json();
+    const m=d.master||{}, ws=d.workers||{};
+    document.getElementById('summary').innerHTML=summary(m,ws);
+    let h='';
+    if(m.hostname) h+=card(m,true);
+    Object.entries(ws).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([,w])=>h+=card(w,false));
+    if(!h) h='<div class="no-data">연결된 머신이 없습니다</div>';
+    document.getElementById('grid').innerHTML=h;
+    document.getElementById('footer').textContent=`${TIMEOUT}초 이상 응답 없는 워커는 자동 제거 · 갱신 ${REFRESH/1000}초`;
+  }catch(e){
+    document.getElementById('grid').innerHTML='<div class="no-data">서버에 연결할 수 없습니다</div>';
+  }
+}
+refresh(); setInterval(refresh,REFRESH);
+</script>
+</body>
+</html>
