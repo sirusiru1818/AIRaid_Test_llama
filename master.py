@@ -466,6 +466,9 @@ def start_llama(config):
         if rpc:
             cmd.extend(["--rpc", ",".join(rpc)])
 
+        if config.get("fit_disabled", True):
+            cmd.extend(["-fit", "off"])
+
         extra = config.get("extra_args", "").strip()
         if extra:
             cmd.extend(extra.split())
