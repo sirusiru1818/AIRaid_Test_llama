@@ -54,9 +54,10 @@ llama_state = {
     "loaded_tensors": 0,
     "phase_started_at": None,
     "last_output_at": None,
+    "error_message": None,
 }
 
-_PHASE_ORDER = ("idle", "starting", "fitting", "loading", "warmup", "ready")
+_PHASE_ORDER = ("idle", "starting", "fitting", "loading", "warmup", "ready", "error")
 
 
 def _phase_idx(p):
@@ -342,6 +343,13 @@ def find_binary(name):
 
 # ── llama-server management ────────────────────
 
+_ERROR_PATTERNS = (
+    "crashed", "recv failed", "rpc server crashed",
+    "cuda error", "out of memory", "fatal error",
+    "failed to allocate", "ggml_cuda_error",
+)
+
+
 def _parse_log_phase(text):
     """로그 한 줄을 분석해서 llama_state의 로딩 단계/진행률을 갱신.
 
@@ -356,6 +364,15 @@ def _parse_log_phase(text):
         llama_state["total_tensors"] = int(m.group(1))
 
     prev = llama_state.get("loading_phase", "starting")
+
+    if prev == "ready":
+        return
+
+    if any(p in lower for p in _ERROR_PATTERNS):
+        llama_state["loading_phase"] = "error"
+        llama_state["error_message"] = text.strip()
+        llama_state["phase_started_at"] = now
+        return
 
     if "fitting" in lower and ("device" in lower or "memory" in lower or "param" in lower):
         if _phase_idx(prev) < _phase_idx("fitting"):
