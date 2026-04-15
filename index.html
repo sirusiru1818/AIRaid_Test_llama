@@ -507,6 +507,15 @@ async function refreshModels(){
   }catch(e){console.error('모델 목록 오류:',e)}
 }
 
+function fmtElapsed(sec){
+  if(sec<5) return '';
+  if(sec<60) return ` (${sec}초 경과)`;
+  const m=Math.floor(sec/60),s=sec%60;
+  if(m<60) return ` (${m}분 ${s}초 경과)`;
+  const h=Math.floor(m/60),rm=m%60;
+  return ` (${h}시간 ${rm}분 경과)`;
+}
+
 function updateServerStatus(llama){
   const ss=document.getElementById('server-status');
   const startBtn=document.getElementById('btn-start');
@@ -522,7 +531,24 @@ function updateServerStatus(llama){
     const pct=llama.loading_progress||0;
     const phaseNames={starting:'서버 시작 중...',fitting:'메모리 배치 계산 중...',loading:'모델 텐서 로딩 중...',warmup:'모델 워밍업 중...',ready:'준비 완료!'};
     const phaseName=phaseNames[phase]||'로딩 중...';
-    ss.innerHTML=`<span class="status-dot loading"></span><div style="flex:1"><div class="ss-label" style="color:var(--yellow)">${phaseName}</div><div class="ss-detail">모델: ${llama.model||'-'} · PID: ${llama.pid}</div><div style="margin-top:8px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:.72rem;color:var(--text-dim)">${phaseName}</span><span style="font-size:.72rem;font-weight:600;color:var(--accent)">${pct}%</span></div><div class="bar-wrap" style="height:6px"><div class="bar purple" style="width:${pct}%;transition:width .3s"></div></div></div></div>`;
+    const nowSec=Math.floor(Date.now()/1000);
+    let elapsedStr='';
+    if(llama.phase_started_at){
+      elapsedStr=fmtElapsed(nowSec-Math.floor(llama.phase_started_at));
+    }
+    let staleHtml='';
+    if(llama.last_output_at){
+      const stale=nowSec-Math.floor(llama.last_output_at);
+      if(stale>120){
+        staleHtml=`<div style="margin-top:6px;padding:6px 10px;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.2);border-radius:6px;font-size:.72rem;color:var(--red)">⚠ ${Math.floor(stale/60)}분 동안 서버 출력 없음 — 프로세스가 멈췄을 수 있습니다. 서버를 중지하고 로그를 확인하세요.</div>`;
+      } else if(stale>30){
+        staleHtml=`<div style="margin-top:6px;font-size:.72rem;color:var(--yellow)">⏳ ${stale}초 동안 출력 대기 중...</div>`;
+      }
+    } else if(llama.started_at && (nowSec-Math.floor(llama.started_at))>30){
+      staleHtml=`<div style="margin-top:6px;font-size:.72rem;color:var(--yellow)">⏳ 서버에서 아직 출력을 수신하지 못했습니다...</div>`;
+    }
+    const aliveStr=llama.last_output_at?`<span style="margin-left:8px;font-size:.68rem;color:var(--text-dim2)">마지막 출력: ${ago(llama.last_output_at)}</span>`:'';
+    ss.innerHTML=`<span class="status-dot loading"></span><div style="flex:1"><div class="ss-label" style="color:var(--yellow)">${phaseName}${elapsedStr}</div><div class="ss-detail">모델: ${llama.model||'-'} · PID: ${llama.pid}${aliveStr}</div><div style="margin-top:8px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:.72rem;color:var(--text-dim)">${phaseName}</span><span style="font-size:.72rem;font-weight:600;color:var(--accent)">${pct}%</span></div><div class="bar-wrap" style="height:6px"><div class="bar purple" style="width:${pct}%;transition:width .3s"></div></div></div>${staleHtml}</div>`;
     ind.innerHTML=`<span class="status-dot loading"></span>로딩 ${pct}%`;
     startBtn.disabled=true; stopBtn.disabled=false;
   } else {

@@ -52,7 +52,18 @@ llama_state = {
     "loading_progress": 0,
     "total_tensors": 0,
     "loaded_tensors": 0,
+    "phase_started_at": None,
+    "last_output_at": None,
 }
+
+_PHASE_ORDER = ("idle", "starting", "fitting", "loading", "warmup", "ready")
+
+
+def _phase_idx(p):
+    try:
+        return _PHASE_ORDER.index(p)
+    except ValueError:
+        return -1
 
 
 # ── System info ────────────────────────────────
@@ -332,24 +343,40 @@ def find_binary(name):
 # ── llama-server management ────────────────────
 
 def _parse_log_phase(text):
-    """로그 한 줄을 분석해서 llama_state의 로딩 단계/진행률을 갱신."""
+    """로그 한 줄을 분석해서 llama_state의 로딩 단계/진행률을 갱신.
+
+    최신 llama.cpp 버전의 다양한 로그 포맷을 폭넓게 매칭한다.
+    단계는 항상 앞으로만 전진하며, 이전 단계로 되돌아가지 않는다.
+    """
+    lower = text.lower()
+    now = time.time()
+
     m = re.search(r"(\d+)\s+tensors", text)
-    if m and "loaded meta data" in text:
+    if m and "meta" in lower:
         llama_state["total_tensors"] = int(m.group(1))
 
-    if "fitting params to device memory" in text:
-        llama_state["loading_phase"] = "fitting"
-        llama_state["loading_progress"] = 5
-    elif "load_tensors: loading model tensors" in text:
-        llama_state["loading_phase"] = "loading"
-        llama_state["loaded_tensors"] = 0
-        llama_state["loading_progress"] = 10
-    elif "warming up the model" in text:
-        llama_state["loading_phase"] = "warmup"
-        llama_state["loading_progress"] = 95
-    elif "all slots are idle" in text or "HTTP server listening" in text:
+    prev = llama_state.get("loading_phase", "starting")
+
+    if "fitting" in lower and ("device" in lower or "memory" in lower or "param" in lower):
+        if _phase_idx(prev) < _phase_idx("fitting"):
+            llama_state["loading_phase"] = "fitting"
+            llama_state["loading_progress"] = 5
+            llama_state["phase_started_at"] = now
+    elif "load_tensors" in lower:
+        if _phase_idx(prev) < _phase_idx("loading"):
+            llama_state["loading_phase"] = "loading"
+            llama_state["loaded_tensors"] = 0
+            llama_state["loading_progress"] = 10
+            llama_state["phase_started_at"] = now
+    elif "warming up" in lower or "warm up" in lower:
+        if _phase_idx(prev) < _phase_idx("warmup"):
+            llama_state["loading_phase"] = "warmup"
+            llama_state["loading_progress"] = 95
+            llama_state["phase_started_at"] = now
+    elif "all slots are idle" in lower or ("server" in lower and "listening" in lower):
         llama_state["loading_phase"] = "ready"
         llama_state["loading_progress"] = 100
+        llama_state["phase_started_at"] = now
 
 
 def _log_reader(stream):
@@ -364,6 +391,7 @@ def _log_reader(stream):
                 if buf:
                     text = buf.decode("utf-8", errors="replace").rstrip()
                     buf.clear()
+                    llama_state["last_output_at"] = time.time()
                     _parse_log_phase(text)
                     with llama_log_lock:
                         llama_log_lines.append(text)
@@ -373,12 +401,15 @@ def _log_reader(stream):
                 buf += ch
                 if ch == b"." and llama_state.get("loading_phase") == "loading":
                     llama_state["loaded_tensors"] = llama_state.get("loaded_tensors", 0) + 1
+                    llama_state["last_output_at"] = time.time()
                     total = llama_state.get("total_tensors", 0)
                     if total > 0:
                         pct = min(10 + round(llama_state["loaded_tensors"] / total * 80), 90)
                         llama_state["loading_progress"] = pct
     except Exception:
         pass
+    finally:
+        check_llama_alive()
 
 
 def _health_checker():
@@ -456,6 +487,8 @@ def start_llama(config):
                 "loading_progress": 0,
                 "total_tensors": 0,
                 "loaded_tensors": 0,
+                "phase_started_at": time.time(),
+                "last_output_at": None,
             })
             threading.Thread(target=_log_reader, args=(proc.stdout,), daemon=True).start()
             return True, f"llama-server 시작됨 (PID {proc.pid})"
@@ -476,12 +509,14 @@ def stop_llama():
             llama_state.update({
                 "running": False, "ready": False, "pid": None, "started_at": None,
                 "loading_phase": "idle", "loading_progress": 0,
+                "phase_started_at": None, "last_output_at": None,
             })
             return True, "llama-server 중지됨"
         llama_proc = None
         llama_state.update({
             "running": False, "ready": False,
             "loading_phase": "idle", "loading_progress": 0,
+            "phase_started_at": None, "last_output_at": None,
         })
         return False, "실행 중인 서버가 없습니다"
 
@@ -494,6 +529,7 @@ def check_llama_alive():
             llama_state.update({
                 "running": False, "ready": False, "pid": None,
                 "loading_phase": "idle", "loading_progress": 0,
+                "phase_started_at": None, "last_output_at": None,
             })
 
 
