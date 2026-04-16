@@ -260,7 +260,7 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
           <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:12px">
             워커의 RPC를 활성화하면 해당 워커의 GPU/CPU를 분산 추론에 활용합니다.<br>
             RPC가 활성화된 워커는 서버 시작 시 자동으로 --rpc 인자에 포함됩니다.<br>
-            <span style="color:var(--text-dim2)">RPC 사용 시 원격 워밍업 크래시 방지를 위해 <code style="font-size:.7rem">--no-warmup</code>이 자동 적용됩니다(추가 인자에 이미 있으면 생략).</span>
+            <span style="color:var(--text-dim2)">RPC 사용 시 안정성을 위해 <code style="font-size:.7rem">--no-warmup</code>·<code style="font-size:.7rem">-fa off</code>(Flash Attention 끔)이 자동 적용됩니다. 추가 인자에 직접 넣은 경우 생략됩니다.</span>
           </div>
           <div class="worker-list" id="worker-rpc-list">
             <div style="color:var(--text-dim);font-size:.82rem;text-align:center;padding:20px">연결된 워커가 없습니다</div>

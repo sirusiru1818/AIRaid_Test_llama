@@ -67,6 +67,19 @@ def _phase_idx(p):
         return -1
 
 
+def _extra_specifies_flash_attn(extra_tokens):
+    """추가 인자에 -fa / --flash-attn 이 이미 있으면 True."""
+    i = 0
+    while i < len(extra_tokens):
+        t = extra_tokens[i]
+        if t in ("-fa", "--flash-attn"):
+            return True
+        if t.startswith("-fa=") or t.startswith("--flash-attn="):
+            return True
+        i += 1
+    return False
+
+
 # ── System info ────────────────────────────────
 
 def get_local_ip():
@@ -493,6 +506,12 @@ def start_llama(config):
         # (ggml-rpc: recv failed / Remote RPC server crashed). 기본으로 건너뜀.
         if rpc and config.get("rpc_no_warmup", True) and "--no-warmup" not in extra_tokens:
             cmd.append("--no-warmup")
+        # RPC + Flash Attention 조합에서 원격 ggml_cuda_flash_attn_ext 크래시 보고됨
+        # (슬롯 초기화/그래프 실행 단계). 기본으로 끔 — https://github.com/ggml-org/llama.cpp/issues/20748
+        if rpc and config.get("rpc_flash_attn_off", True) and not _extra_specifies_flash_attn(
+            extra_tokens
+        ):
+            cmd.extend(["-fa", "off"])
 
         if extra_tokens:
             cmd.extend(extra_tokens)
