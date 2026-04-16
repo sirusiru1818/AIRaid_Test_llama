@@ -233,6 +233,7 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
             <div class="form-group">
               <label>llama-server 포트</label>
               <input type="number" id="llama-port" value="8080" min="1024" max="65535">
+              <div style="font-size:.68rem;color:var(--text-dim2);margin-top:4px">8080이 이미 쓰이면(이전 llama-server 등) 다른 포트로 바꾸세요.</div>
             </div>
           </div>
           <div class="form-group" style="margin-bottom:10px">
@@ -577,34 +578,37 @@ function updateWorkerRpcList(workers){
     list.innerHTML='<div style="color:var(--text-dim);font-size:.82rem;text-align:center;padding:20px">연결된 워커가 없습니다</div>';
     return;
   }
-  list.innerHTML=entries.map(([ip,w])=>{
+  list.innerHTML=entries.map(([wid,w])=>{
     const rpc=w.rpc||{running:false,port:50052};
+    const addr=w.ip||wid;
     const gpuStr=(w.gpus||[]).map(g=>g.name).join(', ')||'GPU 없음';
     const ramStr=w.ram?w.ram.total_gb+' GB RAM':'';
+    const widShort=(w.worker_id||wid).length>12?(w.worker_id||wid).slice(0,8)+'…':(w.worker_id||wid);
     return `<div class="worker-item">
       <div class="wi-info">
-        <div class="wi-name">${w.hostname||ip}</div>
-        <div class="wi-detail">${ip} · ${gpuStr} · ${ramStr}</div>
+        <div class="wi-name">${w.hostname||addr}</div>
+        <div class="wi-detail">${addr} · ${gpuStr} · ${ramStr} · ID ${widShort}</div>
       </div>
       <div class="wi-actions">
         <span class="rpc-badge ${rpc.running?'on':'off'}">RPC ${rpc.running?'ON':'OFF'} :${rpc.port}</span>
         ${rpc.running
-          ?`<button class="btn btn-sm btn-danger" onclick="controlRpc('${ip}','stop',${rpc.port})">중지</button>`
-          :`<button class="btn btn-sm btn-primary" onclick="controlRpc('${ip}','start',${rpc.port})">시작</button>`
+          ?`<button class="btn btn-sm btn-danger" onclick="controlRpc('${String(wid).replace(/'/g,'\\\'')}','stop',${rpc.port})">중지</button>`
+          :`<button class="btn btn-sm btn-primary" onclick="controlRpc('${String(wid).replace(/'/g,'\\\'')}','start',${rpc.port})">시작</button>`
         }
       </div>
     </div>`;
   }).join('');
 }
 
-async function controlRpc(ip,action,port){
+async function controlRpc(workerId,action,port){
   try{
-    const r=await fetch(`/api/workers/${ip}/rpc`,{
+    const enc=encodeURIComponent(workerId);
+    const r=await fetch(`/api/workers/${enc}/rpc`,{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({action,port})
     });
-    const d=await r.json();
-    toast(`${ip}: RPC ${action} 명령 전송됨`,'info');
+    await r.json();
+    toast(`${workerId}: RPC ${action} 명령 전송됨`,'info');
   }catch(e){toast('RPC 제어 오류: '+e.message,'error')}
 }
 
@@ -613,9 +617,10 @@ async function startServer(){
   if(!model){toast('모델을 선택하세요','error');return;}
 
   const rpcWorkers=[];
-  Object.entries(cachedWorkers).forEach(([ip,w])=>{
+  Object.entries(cachedWorkers).forEach(([,w])=>{
     const rpc=w.rpc;
-    if(rpc && rpc.running) rpcWorkers.push(ip+':'+rpc.port);
+    const addr=(w&&w.ip)||'';
+    if(rpc && rpc.running && addr) rpcWorkers.push(addr+':'+rpc.port);
   });
 
   const cfg={

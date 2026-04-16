@@ -347,6 +347,7 @@ _ERROR_PATTERNS = (
     "crashed", "recv failed", "rpc server crashed",
     "cuda error", "out of memory", "fatal error",
     "failed to allocate", "ggml_cuda_error",
+    "couldn't bind", "could not bind", "bind http server",
 )
 
 
@@ -509,6 +510,7 @@ def start_llama(config):
                 "loaded_tensors": 0,
                 "phase_started_at": time.time(),
                 "last_output_at": None,
+                "error_message": None,
             })
             threading.Thread(target=_log_reader, args=(proc.stdout,), daemon=True).start()
             return True, f"llama-server 시작됨 (PID {proc.pid})"
@@ -530,6 +532,7 @@ def stop_llama():
                 "running": False, "ready": False, "pid": None, "started_at": None,
                 "loading_phase": "idle", "loading_progress": 0,
                 "phase_started_at": None, "last_output_at": None,
+                "error_message": None,
             })
             return True, "llama-server 중지됨"
         llama_proc = None
@@ -537,6 +540,7 @@ def stop_llama():
             "running": False, "ready": False,
             "loading_phase": "idle", "loading_progress": 0,
             "phase_started_at": None, "last_output_at": None,
+            "error_message": None,
         })
         return False, "실행 중인 서버가 없습니다"
 
@@ -550,6 +554,7 @@ def check_llama_alive():
                 "running": False, "ready": False, "pid": None,
                 "loading_phase": "idle", "loading_progress": 0,
                 "phase_started_at": None, "last_output_at": None,
+                "error_message": None,
             })
 
 
@@ -563,13 +568,16 @@ def dashboard():
 @app.route("/api/report", methods=["POST"])
 def receive_report():
     data = request.get_json(force=True)
-    ip = data.get("ip", request.remote_addr)
+    ip = data.get("ip") or request.remote_addr
+    data["ip"] = ip
+    wid = (data.get("worker_id") or "").strip() or ip
+    data["worker_id"] = wid
     data["role"] = "worker"
     with workers_lock:
-        workers[ip] = data
+        workers[wid] = data
 
     with worker_commands_lock:
-        cmds = worker_commands.pop(ip, [])
+        cmds = worker_commands.pop(wid, [])
 
     return jsonify({"status": "ok", "commands": cmds})
 
@@ -698,11 +706,11 @@ def proxy_chat():
         return jsonify({"error": str(e)}), 502
 
 
-@app.route("/api/workers/<path:ip>/rpc", methods=["POST"])
-def worker_rpc_control(ip):
+@app.route("/api/workers/<path:worker_id>/rpc", methods=["POST"])
+def worker_rpc_control(worker_id):
     data = request.get_json(force=True)
     with worker_commands_lock:
-        worker_commands.setdefault(ip, []).append({
+        worker_commands.setdefault(worker_id, []).append({
             "type": "rpc",
             "action": data.get("action", "start"),
             "port": int(data.get("port", 50052)),

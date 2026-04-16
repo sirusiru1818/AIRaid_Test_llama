@@ -12,12 +12,14 @@ import socket
 import subprocess
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.request
 
 import psutil
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+WORKER_ID_FILE = os.path.join(BASE_DIR, ".airaid_worker_id")
 LLAMA_DIR = os.path.join(BASE_DIR, "llama")
 
 # ── RPC server process ─────────────────────────
@@ -35,6 +37,25 @@ def get_local_ip():
         return ip
     except Exception:
         return "127.0.0.1"
+
+
+def get_worker_id():
+    """마스터에서 워커를 구분하는 고유 ID (IP만으로는 중복·충돌 가능)."""
+    try:
+        if os.path.exists(WORKER_ID_FILE):
+            with open(WORKER_ID_FILE, "r", encoding="utf-8") as f:
+                s = f.read().strip()
+                if s:
+                    return s
+    except Exception:
+        pass
+    wid = str(uuid.uuid4())
+    try:
+        with open(WORKER_ID_FILE, "w", encoding="utf-8") as f:
+            f.write(wid)
+    except Exception:
+        pass
+    return wid
 
 
 def get_gpu_info():
@@ -147,6 +168,7 @@ def collect_stats():
     return {
         "hostname": socket.gethostname(),
         "ip": get_local_ip(),
+        "worker_id": get_worker_id(),
         "os": f"{platform.system()} {platform.release()}",
         "cpu": {
             "percent": cpu_percent,
@@ -229,6 +251,7 @@ def main():
     print("  AIRaid Worker - Distributed llama.cpp Worker")
     print("=" * 58)
     print(f"  내 IP      : {local_ip}")
+    print(f"  워커 ID    : {get_worker_id()}")
     print(f"  마스터     : {master_url}")
     print(f"  전송 간격  : {args.interval}초")
     print(f"  RPC 포트   : {rpc_port}")
