@@ -116,6 +116,15 @@ def _extra_specifies_cont_batch(extra_tokens):
     return False
 
 
+def _extra_specifies_fused_gdn(extra_tokens):
+    for t in extra_tokens:
+        if t in ("--fused-gdn", "-fgdn"):
+            return True
+        if t.startswith("--fused-gdn="):
+            return True
+    return False
+
+
 # ── System info ────────────────────────────────
 
 def get_local_ip():
@@ -673,6 +682,11 @@ def start_llama(config):
         )
         if rpc_fa_off:
             cmd.extend(["-fa", "off"])
+        # fused GDN 경로가 RPC+저VRAM에서 GET_TENSOR 단계 크래시를 유발하는 사례 — 비퓨전 경로로
+        if rpc and config.get("rpc_fused_gdn_off", True) and not _extra_specifies_fused_gdn(
+            extra_tokens
+        ):
+            cmd.extend(["--fused-gdn", "off"])
         # RPC 시 기본 n_parallel=4면 KV/그래프 부담이 커져 원격 rpc-server OOM·크래시 유발 (#20315 등)
         if rpc and config.get("rpc_parallel_one", True) and not _extra_specifies_parallel(
             extra_tokens
@@ -709,7 +723,7 @@ def start_llama(config):
             popen_env = os.environ.copy()
             if config.get("rpc_disable_cuda_graphs", True):
                 popen_env["GGML_CUDA_DISABLE_GRAPHS"] = "1"
-            if config.get("rpc_cuda_force_mmq", True):
+            if config.get("rpc_cuda_force_mmq", False):
                 popen_env["GGML_CUDA_FORCE_MMQ"] = "1"
 
         try:

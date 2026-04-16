@@ -221,8 +221,9 @@ def start_rpc(port):
             rpc_env = os.environ.copy()
             # setdefault 가 아니라 강제 — 사용자 환경에 그래프 켜짐이 남아 있으면 RPC 불안정
             rpc_env["GGML_CUDA_DISABLE_GRAPHS"] = "1"
-            # 로그의 GTX1650(Turing, 텐서코어 없음) 권장 경로 — 커널/그래프 이슈 완화
-            rpc_env["GGML_CUDA_FORCE_MMQ"] = "1"
+            # MMQ 강제는 일부 RPC 경로에서 불안정할 수 있음. 필요 시 환경변수 AIRAID_RPC_FORCE_MMQ=1
+            if os.environ.get("AIRAID_RPC_FORCE_MMQ") == "1":
+                rpc_env["GGML_CUDA_FORCE_MMQ"] = "1"
             rpc_proc = subprocess.Popen(
                 [exe, "--host", "0.0.0.0", "--port", str(port)],
                 stdout=subprocess.PIPE,

@@ -285,7 +285,7 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
           <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:12px">
             워커의 RPC를 활성화하면 해당 워커의 GPU/CPU를 분산 추론에 활용합니다.<br>
             RPC가 활성화된 워커는 서버 시작 시 자동으로 --rpc 인자에 포함됩니다.<br>
-            <span style="color:var(--text-dim2)">RPC 사용 시 <code style="font-size:.7rem">--no-warmup</code>·<code style="font-size:.7rem">-fa off</code>·<code style="font-size:.7rem">-np 1</code>·<code style="font-size:.7rem">-c</code>≤2048·<code style="font-size:.7rem">-b 128 -ub 64</code>(PEER_MAX_BATCH_SIZE 이하)·<code style="font-size:.7rem">--no-cont-batching</code>·<code style="font-size:.7rem">GGML_CUDA_DISABLE_GRAPHS=1</code> 등이 자동 적용됩니다. 추가 인자에 <code>-b</code>를 넣으면 PEER 한도를 넘지 않게 하세요. 마스터·워커 동일 llama 빌드 권장.</span>
+            <span style="color:var(--text-dim2)">RPC 사용 시 <code style="font-size:.7rem">--no-warmup</code>·<code style="font-size:.7rem">-fa off</code>·<code style="font-size:.7rem">--fused-gdn off</code>·<code style="font-size:.7rem">-np 1</code>·<code style="font-size:.7rem">-c</code>≤2048·<code style="font-size:.7rem">-b 128 -ub 64</code>·<code style="font-size:.7rem">--no-cont-batching</code>·<code style="font-size:.7rem">GGML_CUDA_DISABLE_GRAPHS=1</code> 등이 자동 적용됩니다. llama 빌드가 오래되면 <code>--fused-gdn</code> 미지원일 수 있습니다. 마스터·워커 동일 빌드 권장.</span>
           </div>
           <div class="worker-list" id="worker-rpc-list">
             <div style="color:var(--text-dim);font-size:.82rem;text-align:center;padding:20px">연결된 워커가 없습니다</div>
