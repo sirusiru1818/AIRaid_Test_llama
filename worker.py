@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import platform
+import sys
 import socket
 import subprocess
 import threading
@@ -22,6 +23,80 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKER_ID_FILE = os.path.join(BASE_DIR, ".airaid_worker_id")
 LLAMA_DIR = os.path.join(BASE_DIR, "llama")
 
+# master.py 의 collect_project_env 와 동일 (별도 .py 모듈 없이 워커 단독 실행 가능)
+PROJECT_PIP_PACKAGES = ("flask", "psutil", "requests")
+PROJECT_LLAMA_BINARIES = ("llama-server", "rpc-server")
+
+
+def _find_llama_binary(llama_dir, name):
+    if not llama_dir or not os.path.isdir(llama_dir):
+        return None
+    candidates = {name.lower(), (name + ".exe").lower()}
+    for root, _dirs, files in os.walk(llama_dir):
+        for fn in files:
+            if fn.lower() in candidates:
+                return os.path.join(root, fn)
+    return None
+
+
+def _llama_binary_version_line(exe_path):
+    if not exe_path or not os.path.isfile(exe_path):
+        return None
+    for ver_args in (["--version"], ["-v"]):
+        try:
+            run_kw = dict(
+                args=[exe_path] + ver_args,
+                capture_output=True,
+                text=True,
+                timeout=12,
+            )
+            if sys.platform == "win32":
+                run_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+            r = subprocess.run(**run_kw)
+            out = (r.stdout or "") + (r.stderr or "")
+            lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+            if lines:
+                return lines[0][:800]
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+    try:
+        st = os.stat(exe_path)
+        return f"(바이너리만 확인, --version 없음 · mtime {int(st.st_mtime)})"
+    except OSError:
+        return None
+
+
+def _pip_pkg_version(name):
+    try:
+        from importlib import metadata
+
+        return metadata.version(name)
+    except Exception:
+        return None
+
+
+def collect_project_env(llama_dir):
+    out = {
+        "python": platform.python_version(),
+        "packages": {},
+        "llama_binaries": {},
+        "collected_at": time.time(),
+    }
+    for pkg in PROJECT_PIP_PACKAGES:
+        v = _pip_pkg_version(pkg)
+        out["packages"][pkg] = v if v else "(미설치)"
+    for name in PROJECT_LLAMA_BINARIES:
+        path = _find_llama_binary(llama_dir, name)
+        if path:
+            out["llama_binaries"][name] = {
+                "path": path,
+                "version": _llama_binary_version_line(path),
+            }
+        else:
+            out["llama_binaries"][name] = {"path": None, "version": None}
+    return out
+
+
 _software_cache = None
 _software_cache_ts = 0.0
 _SOFTWARE_CACHE_TTL = 45.0
@@ -32,9 +107,7 @@ def get_software_snapshot():
     now = time.time()
     if _software_cache is None or now - _software_cache_ts >= _SOFTWARE_CACHE_TTL:
         try:
-            from software_info import collect_airaid_software
-
-            _software_cache = collect_airaid_software(LLAMA_DIR)
+            _software_cache = collect_project_env(LLAMA_DIR)
         except Exception as e:
             _software_cache = {"error": str(e)}
         _software_cache_ts = now
