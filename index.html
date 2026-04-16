@@ -243,7 +243,7 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
             <div class="form-group">
               <label>Context Size</label>
               <input type="number" id="ctx-size" value="4096" min="128">
-              <div style="font-size:.68rem;color:var(--text-dim2);margin-top:4px">RPC 워커 연결 시 자동으로 최대 4096으로 맞춥니다(메모리). 더 필요하면 워커 VRAM을 늘리거나 추가 인자로 조정하세요.</div>
+              <div style="font-size:.68rem;color:var(--text-dim2);margin-top:4px">RPC 워커 연결 시 자동으로 최대 2048 컨텍스트로 맞춥니다(저VRAM·RPC 안정). 더 길게 쓰려면 워커 GPU 여유가 있을 때 추가 인자로 조정하세요.</div>
             </div>
             <div class="form-group">
               <label>GPU Layers (-1 = 전체)</label>
@@ -285,7 +285,7 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
           <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:12px">
             워커의 RPC를 활성화하면 해당 워커의 GPU/CPU를 분산 추론에 활용합니다.<br>
             RPC가 활성화된 워커는 서버 시작 시 자동으로 --rpc 인자에 포함됩니다.<br>
-            <span style="color:var(--text-dim2)">RPC 사용 시 <code style="font-size:.7rem">--no-warmup</code>·<code style="font-size:.7rem">-fa off</code>·<code style="font-size:.7rem">-np 1</code>·<code style="font-size:.7rem">-c</code>≤4096·<code style="font-size:.7rem">-b/-ub</code> 축소·<code style="font-size:.7rem">GGML_CUDA_DISABLE_GRAPHS=1</code> 등이 자동 적용됩니다. (<code>-fa off</code>일 때는 KV q8을 넣지 않습니다 — llama.cpp 제약.) 워커는 <code style="font-size:.7rem">worker.py</code> 최신·동일 llama 빌드 권장.</span>
+            <span style="color:var(--text-dim2)">RPC 사용 시 <code style="font-size:.7rem">--no-warmup</code>·<code style="font-size:.7rem">-fa off</code>·<code style="font-size:.7rem">-np 1</code>·<code style="font-size:.7rem">-c</code>≤2048·<code style="font-size:.7rem">-b/-ub</code> 축소·<code style="font-size:.7rem">--no-cont-batching</code>·<code style="font-size:.7rem">GGML_CUDA_DISABLE_GRAPHS=1</code> 등이 자동 적용됩니다. (<code>-fa off</code>일 때는 KV q8 생략.) 마스터·워커 <code>llama-server</code>/<code>rpc-server</code>는 동일 빌드 권장.</span>
           </div>
           <div class="worker-list" id="worker-rpc-list">
             <div style="color:var(--text-dim);font-size:.82rem;text-align:center;padding:20px">연결된 워커가 없습니다</div>

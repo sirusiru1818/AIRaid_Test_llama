@@ -109,6 +109,13 @@ def _extra_specifies_kv_cache(extra_tokens):
     return False
 
 
+def _extra_specifies_cont_batch(extra_tokens):
+    for t in extra_tokens:
+        if t in ("-cb", "--cont-batching", "-nocb", "--no-cont-batching"):
+            return True
+    return False
+
+
 # ── System info ────────────────────────────────
 
 def get_local_ip():
@@ -630,9 +637,9 @@ def start_llama(config):
         extra_tokens = extra.split() if extra else []
 
         rpc = config.get("rpc_workers", [])
-        # 원격 4GB 등 VRAM 한계 시 8192 ctx + 큰 배치가 rpc-server OOM/슬롯 초기화 크래시 유발
+        # 원격 4GB·슬롯 초기화(ggml-rpc) 불안정 시 — 기본 상한 2048 (필요 시 rpc_context_cap 으로 상향)
         if rpc and config.get("rpc_cap_context", True):
-            cap = int(config.get("rpc_context_cap", 4096))
+            cap = int(config.get("rpc_context_cap", 2048))
             if ctx > cap:
                 ctx = cap
 
@@ -671,10 +678,14 @@ def start_llama(config):
             extra_tokens
         ):
             cmd.extend(["-np", "1"])
+        if rpc and config.get("rpc_disable_cont_batching", True) and not _extra_specifies_cont_batch(
+            extra_tokens
+        ):
+            cmd.append("--no-cont-batching")
         if rpc and config.get("rpc_reduce_batch", True) and not _extra_specifies_batch(
             extra_tokens
         ):
-            cmd.extend(["-b", "1024", "-ub", "256"])
+            cmd.extend(["-b", "512", "-ub", "128"])
         # KV q8 는 llama.cpp에서 flash_attn 필요 — -fa off(rpc_fa_off)와 동시에 쓸 수 없음
         if (
             rpc
