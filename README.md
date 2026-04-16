@@ -1,9 +1,19 @@
 # AIRaid - Distributed llama.cpp
 
+## Motivation(ver.En)
+
+Running large language models locally has clear advantages—privacy, cost control, and full customization. However, in practice, a single machine often lacks the GPU memory and compute power required to handle modern large-scale models. At the same time, building a multi-GPU system within one PC is expensive and not always feasible.
+
+This project started from a simple observation: while one machine may be insufficient, there are often multiple accessible computers (e.g., in a school or lab environment) that each have decent GPUs and ample memory. Instead of letting these resources sit idle or be used independently, it makes far more sense to aggregate them.
+
+AIRaid was created to turn multiple distributed PCs into a single, unified LLM inference system. By leveraging llama.cpp’s RPC-based distributed inference, this project allows you to combine scattered compute resources into one logical server—making it possible to run models that would otherwise be out of reach on a single machine.
+
+
+## 역할
 llama.cpp의 RPC 분산 추론을 활용한 **마스터-워커 구조**의 분산 LLM 시스템입니다.
 여러 대의 PC에 분산된 GPU/CPU를 하나로 묶어 대형 모델을 실행할 수 있습니다.
 
-##실행전 기본 세팅
+## 실행전 기본 세팅
 nvidia 그래픽 업데이트
 git설치 후 깃클론
 
