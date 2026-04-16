@@ -682,10 +682,13 @@ def start_llama(config):
             extra_tokens
         ):
             cmd.append("--no-cont-batching")
+        # system_info 의 PEER_MAX_BATCH_SIZE(보통 128) 초과 시 원격 RPC 그래프/슬롯 초기화에서 크래시 보고됨
         if rpc and config.get("rpc_reduce_batch", True) and not _extra_specifies_batch(
             extra_tokens
         ):
-            cmd.extend(["-b", "512", "-ub", "128"])
+            rb = str(int(config.get("rpc_batch_size", 128)))
+            rub = str(int(config.get("rpc_ubatch_size", 64)))
+            cmd.extend(["-b", rb, "-ub", rub])
         # KV q8 는 llama.cpp에서 flash_attn 필요 — -fa off(rpc_fa_off)와 동시에 쓸 수 없음
         if (
             rpc
