@@ -659,9 +659,12 @@ def start_llama(config):
             cmd.append("--no-warmup")
         # RPC + Flash Attention 조합에서 원격 ggml_cuda_flash_attn_ext 크래시 보고됨
         # (슬롯 초기화/그래프 실행 단계). 기본으로 끔 — https://github.com/ggml-org/llama.cpp/issues/20748
-        if rpc and config.get("rpc_flash_attn_off", True) and not _extra_specifies_flash_attn(
-            extra_tokens
-        ):
+        rpc_fa_off = (
+            rpc
+            and config.get("rpc_flash_attn_off", True)
+            and not _extra_specifies_flash_attn(extra_tokens)
+        )
+        if rpc_fa_off:
             cmd.extend(["-fa", "off"])
         # RPC 시 기본 n_parallel=4면 KV/그래프 부담이 커져 원격 rpc-server OOM·크래시 유발 (#20315 등)
         if rpc and config.get("rpc_parallel_one", True) and not _extra_specifies_parallel(
@@ -672,9 +675,12 @@ def start_llama(config):
             extra_tokens
         ):
             cmd.extend(["-b", "1024", "-ub", "256"])
-        # KV를 q8로 줄이면 원격 VRAM 여유가 생김(품질 영향 가능). 문제 시 API에서 rpc_kv_cache_q8: false
-        if rpc and config.get("rpc_kv_cache_q8", True) and not _extra_specifies_kv_cache(
-            extra_tokens
+        # KV q8 는 llama.cpp에서 flash_attn 필요 — -fa off(rpc_fa_off)와 동시에 쓸 수 없음
+        if (
+            rpc
+            and config.get("rpc_kv_cache_q8", True)
+            and not _extra_specifies_kv_cache(extra_tokens)
+            and not rpc_fa_off
         ):
             cmd.extend(["-ctk", "q8_0", "-ctv", "q8_0"])
 
