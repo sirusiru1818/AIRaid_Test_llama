@@ -191,7 +191,7 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px">
         <div>
           <div style="font-size:.9rem;font-weight:600">버전 일치 검사</div>
-          <div style="font-size:.72rem;color:var(--text-dim2);margin-top:4px">requirements.txt(flask·psutil·requests)와 llama/ 의 llama-server·rpc-server 만 비교합니다.</div>
+          <div style="font-size:.72rem;color:var(--text-dim2);margin-top:4px">워커는 <code style="font-size:.7rem">psutil</code>·llama 바이너리만 마스터와 비교합니다. flask·requests 는 마스터만 해당합니다.</div>
         </div>
         <button type="button" class="btn btn-sm btn-primary" onclick="runVersionAudit()">검사 실행</button>
       </div>
@@ -841,12 +841,17 @@ document.addEventListener('DOMContentLoaded',()=>{
 function renderSoftwareHtml(sw){
   if(!sw) return '<p style="color:var(--text-dim)">아직 수집된 정보가 없습니다. 잠시 후 다시 열어보세요.</p>';
   if(sw.error) return '<p style="color:var(--red)">'+escHtml(sw.error)+'</p>';
-  let h='<p style="font-size:.72rem;color:var(--text-dim2);margin-bottom:12px;line-height:1.45">이 프로젝트 실행에 쓰는 항목만 표시합니다 · <code style="font-size:.7rem">requirements.txt</code> + <code style="font-size:.7rem">llama/</code> 바이너리</p>';
+  const isWorker=sw.env_role==='worker';
+  const intro=isWorker
+    ? '<strong>워커 PC</strong>에는 <code>psutil</code>(모니터링)과 <code>llama/</code> 바이너리만 필요합니다. <code>flask</code>·<code>requests</code>는 마스터(웹 대시보드)에만 설치하면 됩니다.'
+    : '<strong>마스터 PC</strong>에는 <code>requirements.txt</code> 전체와 <code>llama/</code> 가 필요합니다.';
+  let h='<p style="font-size:.72rem;color:var(--text-dim2);margin-bottom:12px;line-height:1.5">'+intro+'</p>';
   h+='<table class="sw-table">';
   h+='<tr><th scope="row">Python</th><td>'+escHtml(sw.python||'-')+' <span style="font-size:.68rem;color:var(--text-dim2)">(실행 인터프리터)</span></td></tr>';
   const pk=sw.packages||{};
   const keys=Object.keys(pk);
-  h+='<tr><th scope="row">pip (프로젝트)</th><td>';
+  const pipLabel=isWorker?'pip (워커 필수)':'pip (마스터 · requirements.txt)';
+  h+='<tr><th scope="row">'+pipLabel+'</th><td>';
   if(keys.length){
     h+='<ul class="sw-list">';
     keys.forEach(k=>{

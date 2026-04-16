@@ -23,8 +23,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKER_ID_FILE = os.path.join(BASE_DIR, ".airaid_worker_id")
 LLAMA_DIR = os.path.join(BASE_DIR, "llama")
 
-# master.py 의 collect_project_env 와 동일 (별도 .py 모듈 없이 워커 단독 실행 가능)
-PROJECT_PIP_PACKAGES = ("flask", "psutil", "requests")
+# 워커는 worker.py 가 import 하는 pip 만 (flask/requests 는 마스터 전용)
+WORKER_PIP_PACKAGES = ("psutil",)
 PROJECT_LLAMA_BINARIES = ("llama-server", "rpc-server")
 
 
@@ -77,12 +77,13 @@ def _pip_pkg_version(name):
 
 def collect_project_env(llama_dir):
     out = {
+        "env_role": "worker",
         "python": platform.python_version(),
         "packages": {},
         "llama_binaries": {},
         "collected_at": time.time(),
     }
-    for pkg in PROJECT_PIP_PACKAGES:
+    for pkg in WORKER_PIP_PACKAGES:
         v = _pip_pkg_version(pkg)
         out["packages"][pkg] = v if v else "(미설치)"
     for name in PROJECT_LLAMA_BINARIES:

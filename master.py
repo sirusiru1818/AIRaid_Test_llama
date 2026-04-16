@@ -132,8 +132,9 @@ def get_gpu_info():
         return []
 
 
-# ── 프로젝트 실행에 필요한 항목만 (requirements.txt + llama/ 바이너리) ──
-PROJECT_PIP_PACKAGES = ("flask", "psutil", "requests")
+# ── 프로젝트 환경: 마스터는 웹 대시보드용 pip 전부, 워커는 worker.py가 쓰는 것만 ──
+MASTER_PIP_PACKAGES = ("flask", "psutil", "requests")
+WORKER_PIP_PACKAGES = ("psutil",)
 PROJECT_LLAMA_BINARIES = ("llama-server", "rpc-server")
 
 
@@ -185,14 +186,15 @@ def _pip_pkg_version(name: str):
 
 
 def collect_project_env(llama_dir: str):
-    """requirements.txt 패키지 + llama-server / rpc-server 만."""
+    """마스터: requirements.txt + llama 바이너리. (워커는 worker.py 의 collect_project_env 참고)"""
     out = {
+        "env_role": "master",
         "python": platform.python_version(),
         "packages": {},
         "llama_binaries": {},
         "collected_at": time.time(),
     }
-    for pkg in PROJECT_PIP_PACKAGES:
+    for pkg in MASTER_PIP_PACKAGES:
         v = _pip_pkg_version(pkg)
         out["packages"][pkg] = v if v else "(미설치)"
     for name in PROJECT_LLAMA_BINARIES:
@@ -777,7 +779,7 @@ def build_version_audit_response():
             add_issue("warning", "software_collect", label, "정상", err)
 
         _miss = "(미설치)"
-        for pkg in PROJECT_PIP_PACKAGES:
+        for pkg in WORKER_PIP_PACKAGES:
             a = (ref.get("packages") or {}).get(pkg)
             b = (sw.get("packages") or {}).get(pkg)
             if a == b:
