@@ -488,8 +488,14 @@ def start_llama(config):
             cmd.extend(["-fit", "off"])
 
         extra = config.get("extra_args", "").strip()
-        if extra:
-            cmd.extend(extra.split())
+        extra_tokens = extra.split() if extra else []
+        # RPC 분산 시 빈 워밍업 런이 원격 rpc-server를 크래시시키는 경우가 많음
+        # (ggml-rpc: recv failed / Remote RPC server crashed). 기본으로 건너뜀.
+        if rpc and config.get("rpc_no_warmup", True) and "--no-warmup" not in extra_tokens:
+            cmd.append("--no-warmup")
+
+        if extra_tokens:
+            cmd.extend(extra_tokens)
 
         with llama_log_lock:
             llama_log_lines.clear()
