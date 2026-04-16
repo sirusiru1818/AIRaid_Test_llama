@@ -22,6 +22,25 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKER_ID_FILE = os.path.join(BASE_DIR, ".airaid_worker_id")
 LLAMA_DIR = os.path.join(BASE_DIR, "llama")
 
+_software_cache = None
+_software_cache_ts = 0.0
+_SOFTWARE_CACHE_TTL = 45.0
+
+
+def get_software_snapshot():
+    global _software_cache, _software_cache_ts
+    now = time.time()
+    if _software_cache is None or now - _software_cache_ts >= _SOFTWARE_CACHE_TTL:
+        try:
+            from software_info import collect_airaid_software
+
+            _software_cache = collect_airaid_software(LLAMA_DIR)
+        except Exception as e:
+            _software_cache = {"error": str(e)}
+        _software_cache_ts = now
+    return _software_cache
+
+
 # ── RPC server process ─────────────────────────
 rpc_proc = None
 rpc_proc_lock = threading.Lock()
@@ -112,9 +131,14 @@ def start_rpc(port):
 
         rpc_port = port
         try:
+            rpc_env = os.environ.copy()
+            # RPC 서버 CUDA 그래프 누수/크래시 완화 — 마스터 llama-server와 동일 권장
+            rpc_env.setdefault("GGML_CUDA_DISABLE_GRAPHS", "1")
             rpc_proc = subprocess.Popen(
                 [exe, "--host", "0.0.0.0", "--port", str(port)],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=rpc_env,
             )
             print(f"[RPC] rpc-server 시작됨 (port {port}, PID {rpc_proc.pid})")
         except Exception as e:
@@ -188,6 +212,7 @@ def collect_stats():
         },
         "gpus": get_gpu_info(),
         "rpc": get_rpc_status(),
+        "software": get_software_snapshot(),
         "timestamp": time.time(),
     }
 

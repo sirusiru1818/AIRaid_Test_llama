@@ -70,6 +70,20 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
 .gpu-name{font-size:.78rem;font-weight:600;color:var(--accent)}
 .gpu-temp{font-size:.72rem;padding:2px 7px;border-radius:8px;font-weight:600}
 .no-data{text-align:center;color:var(--text-dim);padding:60px 20px;font-size:.9rem;grid-column:1/-1}
+.card-pick{cursor:pointer}
+.card-pick .card-header .info{cursor:pointer}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10000;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;max-width:680px;width:100%;max-height:88vh;overflow:auto;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.45)}
+.modal-body{font-size:.82rem}
+.sw-table{width:100%;border-collapse:collapse}
+.sw-table th{text-align:left;color:var(--text-dim);font-weight:600;padding:8px 12px 8px 0;vertical-align:top;width:138px;font-size:.75rem}
+.sw-table td{padding:8px 0;vertical-align:top}
+.sw-list{margin:0;padding-left:18px}
+.sw-list li{margin:2px 0}
+.audit-panel{max-width:1600px;margin:0 auto 20px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px 20px}
+.audit-issue{margin-bottom:8px;padding:10px 12px;border-radius:8px;font-size:.76rem;line-height:1.45}
+.audit-issue.err{background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25)}
+.audit-issue.warn{background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2)}
 
 /* ── LLM tab ── */
 .llm-layout{display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:1400px;margin:0 auto}
@@ -173,6 +187,16 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
   <!-- ═══ Monitor Tab ═══ -->
   <div class="tab-content active" id="tab-monitor">
     <div class="stats-summary" id="summary"></div>
+    <div class="audit-panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px">
+        <div>
+          <div style="font-size:.9rem;font-weight:600">버전 일치 검사</div>
+          <div style="font-size:.72rem;color:var(--text-dim2);margin-top:4px">마스터 기준으로 워커의 Python·pip·llama-server·rpc-server 빌드를 비교합니다.</div>
+        </div>
+        <button type="button" class="btn btn-sm btn-primary" onclick="runVersionAudit()">검사 실행</button>
+      </div>
+      <div id="version-audit-result" style="margin-top:12px;font-size:.78rem;color:var(--text-dim)">「검사 실행」을 누르면 결과가 여기에 표시됩니다.</div>
+    </div>
     <div class="grid" id="grid"><div class="no-data">데이터를 불러오는 중...</div></div>
   </div>
 
@@ -260,7 +284,7 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
           <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:12px">
             워커의 RPC를 활성화하면 해당 워커의 GPU/CPU를 분산 추론에 활용합니다.<br>
             RPC가 활성화된 워커는 서버 시작 시 자동으로 --rpc 인자에 포함됩니다.<br>
-            <span style="color:var(--text-dim2)">RPC 사용 시 안정성을 위해 <code style="font-size:.7rem">--no-warmup</code>·<code style="font-size:.7rem">-fa off</code>(Flash Attention 끔)이 자동 적용됩니다. 추가 인자에 직접 넣은 경우 생략됩니다.</span>
+            <span style="color:var(--text-dim2)">RPC 사용 시 안정성을 위해 <code style="font-size:.7rem">--no-warmup</code>·<code style="font-size:.7rem">-fa off</code>·<code style="font-size:.7rem">-np 1</code>·환경변수 <code style="font-size:.7rem">GGML_CUDA_DISABLE_GRAPHS=1</code>(마스터·워커 rpc-server)이 자동 적용됩니다. 워커 PC의 <code style="font-size:.7rem">worker.py</code>를 최신으로 맞춘 뒤 RPC를 재시작하세요.</span>
           </div>
           <div class="worker-list" id="worker-rpc-list">
             <div style="color:var(--text-dim);font-size:.82rem;text-align:center;padding:20px">연결된 워커가 없습니다</div>
@@ -310,6 +334,16 @@ input,select,textarea,button{font-family:inherit;color:var(--text)}
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div id="sw-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="sw-modal-title">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;align-items:start;gap:12px;margin-bottom:14px">
+      <h3 id="sw-modal-title" style="font-size:1rem;font-weight:600">설치 소프트웨어</h3>
+      <button type="button" class="btn btn-sm" onclick="closeSoftwareModal()" style="background:rgba(255,255,255,.08);flex-shrink:0">닫기</button>
+    </div>
+    <div id="sw-modal-body" class="modal-body"></div>
+  </div>
+</div>
 
 <script>
 const REFRESH = 2000;
@@ -361,9 +395,18 @@ function gpuHtml(g){
   const t=tc(g.temperature_c);
   return `<div class="gpu-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span class="gpu-name">GPU ${g.index}: ${g.name}</span><span class="gpu-temp" style="background:${t.bg};color:${t.c}">${g.temperature_c}°C</span></div>${metric('사용률',g.gpu_util_percent+'%',g.gpu_util_percent,'purple')}<div style="height:3px"></div>${metric('VRAM',g.memory_used_mb+' / '+g.memory_total_mb+' MB',vp,'blue')}</div>`;
 }
-function cardHtml(d,isMaster){
-  const cls=isMaster?'card master':'card';
+function escHtml(s){
+  if(s===null||s===undefined) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s){
+  return escHtml(s).replace(/"/g,'&quot;');
+}
+function cardHtml(d,isMaster,workerKey){
+  const cls=(isMaster?'card master':'card')+' card-pick';
   const badge=isMaster?'<span class="badge master-b">MASTER</span>':'<span class="badge worker-b">WORKER</span>';
+  const dataNode=isMaster?'master':'worker';
+  const dataWid=isMaster?'':escAttr(workerKey||'');
   const cpu=d.cpu||{},ram=d.ram||{},disk=d.disk||{},gpus=d.gpus||[];
   const rpc=d.rpc;
   let rpcHtml='';
@@ -373,7 +416,7 @@ function cardHtml(d,isMaster){
   let gSec='';
   if(gpus.length) gSec=`<div class="section"><div class="section-title">GPU</div>${gpus.map(gpuHtml).join('')}</div>`;
   else gSec=`<div class="section"><div class="section-title">GPU</div><div style="color:var(--text-dim);font-size:.78rem">GPU 없음 또는 감지 불가</div></div>`;
-  return `<div class="${cls}"><div class="card-header"><div class="info"><h2>${d.hostname||'알 수 없음'}</h2><div class="meta">${d.ip||''} · ${d.os||''} · ${ago(d.timestamp)}</div></div>${badge}</div><div class="section"><div class="section-title">CPU (${cpu.count_physical||'?'}코어 / ${cpu.count_logical||'?'}스레드 · ${cpu.freq_mhz||0} MHz)</div>${metric('사용률',(cpu.percent||0)+'%',cpu.percent||0)}</div><div class="section"><div class="section-title">RAM</div>${metric('사용량',(ram.used_gb||0)+' / '+(ram.total_gb||0)+' GB',ram.percent||0)}</div><div class="section"><div class="section-title">DISK</div>${metric('사용량',(disk.used_gb||0)+' / '+(disk.total_gb||0)+' GB',disk.percent||0)}</div>${rpcHtml}${gSec}</div>`;
+  return `<div class="${cls}" data-node="${dataNode}" data-wid="${dataWid}"><div class="card-header"><div class="info"><h2>${d.hostname||'알 수 없음'}</h2><div class="meta">${d.ip||''} · ${d.os||''} · ${ago(d.timestamp)}<br><span style="font-size:.68rem;color:var(--text-dim2)">클릭: 패키지·llama 바이너리 버전</span></div></div>${badge}</div><div class="section"><div class="section-title">CPU (${cpu.count_physical||'?'}코어 / ${cpu.count_logical||'?'}스레드 · ${cpu.freq_mhz||0} MHz)</div>${metric('사용률',(cpu.percent||0)+'%',cpu.percent||0)}</div><div class="section"><div class="section-title">RAM</div>${metric('사용량',(ram.used_gb||0)+' / '+(ram.total_gb||0)+' GB',ram.percent||0)}</div><div class="section"><div class="section-title">DISK</div>${metric('사용량',(disk.used_gb||0)+' / '+(disk.total_gb||0)+' GB',disk.percent||0)}</div>${rpcHtml}${gSec}</div>`;
 }
 function summaryHtml(m,ws){
   const wl=Object.values(ws),total=1+wl.length;
@@ -680,7 +723,6 @@ function renderChat(){
   area.innerHTML=h||'<div class="msg system-msg">LLM 서버를 시작한 후 채팅을 이용할 수 있습니다.</div>';
   area.scrollTop=area.scrollHeight;
 }
-function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
 function clearChat(){
   chatMessages=[];
@@ -782,15 +824,93 @@ function resetChatUI(){
 document.addEventListener('DOMContentLoaded',()=>{
   const ta=document.getElementById('chat-input');
   ta.addEventListener('input',()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,150)+'px';});
+  const grid=document.getElementById('grid');
+  grid.addEventListener('click',ev=>{
+    const card=ev.target.closest('.card-pick[data-node]');
+    if(!card) return;
+    const node=card.getAttribute('data-node');
+    const wid=card.getAttribute('data-wid')||'';
+    openSoftwarePanel(node,wid);
+  });
+  document.getElementById('sw-modal').addEventListener('click',ev=>{
+    if(ev.target.id==='sw-modal') closeSoftwareModal();
+  });
 });
 
 /* ── Refresh loop ── */
+function renderSoftwareHtml(sw){
+  if(!sw) return '<p style="color:var(--text-dim)">아직 수집된 정보가 없습니다. 잠시 후 다시 열어보세요.</p>';
+  if(sw.error) return '<p style="color:var(--red)">'+escHtml(sw.error)+'</p>';
+  let h='<table class="sw-table">';
+  h+='<tr><th scope="row">Python</th><td>'+escHtml(sw.python||'-')+'</td></tr>';
+  h+='<tr><th scope="row">플랫폼</th><td style="word-break:break-word">'+escHtml(sw.platform||'-')+'</td></tr>';
+  const pk=sw.packages||{};
+  const keys=Object.keys(pk);
+  h+='<tr><th scope="row">pip 패키지</th><td>';
+  if(keys.length){
+    h+='<ul class="sw-list">';
+    keys.forEach(k=>{ h+='<li><code>'+escHtml(k)+'</code> · '+escHtml(pk[k])+'</li>'; });
+    h+='</ul>';
+  }else h+='<span style="color:var(--text-dim)">없음</span>';
+  h+='</td></tr>';
+  const lb=sw.llama_binaries||{};
+  ['llama-server','rpc-server'].forEach(name=>{
+    const b=lb[name]||{};
+    h+='<tr><th scope="row">'+escHtml(name)+'</th><td>';
+    if(b.path) h+='<div style="font-size:.72rem;word-break:break-all;color:var(--text-dim2);margin-bottom:6px">'+escHtml(b.path)+'</div>';
+    h+='<div style="font-family:\'Fira Code\',\'Cascadia Code\',monospace;font-size:.74rem;line-height:1.45">'+escHtml(b.version||'(버전 문자열 없음)')+'</div></td></tr>';
+  });
+  h+='</table>';
+  return h;
+}
+function openSoftwarePanel(node,wid){
+  const sc=window._statsCache||{};
+  let d=null,title='';
+  if(node==='master'){
+    d=sc.master;
+    title='마스터 · '+(d&&d.hostname||'');
+  }else{
+    const ws=sc.workers||{};
+    d=ws[wid];
+    title='워커 · '+(d&&d.hostname||wid);
+  }
+  document.getElementById('sw-modal-title').textContent=title+' — 설치 소프트웨어';
+  document.getElementById('sw-modal-body').innerHTML=renderSoftwareHtml(d&&d.software);
+  document.getElementById('sw-modal').style.display='flex';
+}
+function closeSoftwareModal(){
+  document.getElementById('sw-modal').style.display='none';
+}
+async function runVersionAudit(){
+  const el=document.getElementById('version-audit-result');
+  el.innerHTML='<span style="color:var(--text-dim)">검사 중...</span>';
+  try{
+    const r=await fetch('/api/version-audit');
+    const j=await r.json();
+    if(!j.issues||!j.issues.length){
+      el.innerHTML='<span style="color:var(--green);font-weight:600">✓ 불일치 없음</span> <span style="color:var(--text-dim)">(또는 비교할 워커·데이터 없음)</span>';
+      return;
+    }
+    let h='';
+    if(j.ok===false) h+='<div style="color:var(--red);margin-bottom:10px;font-weight:600">llama 바이너리 등 오류 수준 불일치가 있습니다.</div>';
+    h+=j.issues.map(it=>{
+      const cls=it.severity==='error'?'audit-issue err':'audit-issue warn';
+      const sev=it.severity==='error'?'오류':'경고';
+      return '<div class="'+cls+'"><strong>'+sev+'</strong> · '+escHtml(it.machine)+' · <code>'+escHtml(it.component)+'</code><br>기대: '+escHtml(String(it.expected))+' · 실제: '+escHtml(String(it.actual))+(it.hint?'<br><span style="opacity:.9">'+escHtml(it.hint)+'</span>':'')+'</div>';
+    }).join('');
+    el.innerHTML=h;
+  }catch(e){
+    el.innerHTML='<span style="color:var(--red)">'+escHtml(e.message)+'</span>';
+  }
+}
+
 async function refresh(){
   try{
     const r=await fetch('/api/stats');
     const d=await r.json();
     const m=d.master||{},ws=d.workers||{},llama=d.llama||{};
     cachedWorkers=ws;
+    window._statsCache={master:m,workers:ws};
 
     document.getElementById('worker-count').textContent=`워커 ${Object.keys(ws).length}`;
     updateServerStatus(llama);
@@ -799,7 +919,7 @@ async function refresh(){
       document.getElementById('summary').innerHTML=summaryHtml(m,ws);
       let h='';
       if(m.hostname) h+=cardHtml(m,true);
-      Object.entries(ws).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([,w])=>h+=cardHtml(w,false));
+      Object.entries(ws).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([wk,w])=>h+=cardHtml(w,false,wk));
       if(!h) h='<div class="no-data">연결된 머신이 없습니다</div>';
       document.getElementById('grid').innerHTML=h;
     }

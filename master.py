@@ -80,6 +80,16 @@ def _extra_specifies_flash_attn(extra_tokens):
     return False
 
 
+def _extra_specifies_parallel(extra_tokens):
+    """추가 인자에 -np / --parallel 이 이미 있으면 True."""
+    for t in extra_tokens:
+        if t in ("-np", "--parallel"):
+            return True
+        if t.startswith("--parallel="):
+            return True
+    return False
+
+
 # ── System info ────────────────────────────────
 
 def get_local_ip():
@@ -124,9 +134,12 @@ def get_gpu_info():
 
 master_stats = {}
 master_stats_lock = threading.Lock()
+_master_software_ts = 0.0
+_MASTER_SOFTWARE_TTL = 45.0
 
 
 def collect_master_loop():
+    global _master_software_ts
     psutil.cpu_percent()
     time.sleep(1)
     while True:
@@ -138,6 +151,24 @@ def collect_master_loop():
                 disk = psutil.disk_usage("C:\\" if platform.system() == "Windows" else "/")
             except Exception:
                 disk = None
+
+            now = time.time()
+            sw = None
+            with master_stats_lock:
+                prev_sw = master_stats.get("software")
+            if (
+                prev_sw is None
+                or now - _master_software_ts >= _MASTER_SOFTWARE_TTL
+            ):
+                try:
+                    from software_info import collect_airaid_software
+
+                    sw = collect_airaid_software(LLAMA_DIR)
+                except Exception as e:
+                    sw = {"error": str(e)}
+                _master_software_ts = now
+            else:
+                sw = prev_sw or {}
 
             stats = {
                 "hostname": socket.gethostname(),
@@ -161,6 +192,7 @@ def collect_master_loop():
                     "percent": round(disk.percent, 1) if disk else 0,
                 },
                 "gpus": get_gpu_info(),
+                "software": sw,
                 "timestamp": time.time(),
             }
             with master_stats_lock:
@@ -512,6 +544,11 @@ def start_llama(config):
             extra_tokens
         ):
             cmd.extend(["-fa", "off"])
+        # RPC 시 기본 n_parallel=4면 KV/그래프 부담이 커져 원격 rpc-server OOM·크래시 유발 (#20315 등)
+        if rpc and config.get("rpc_parallel_one", True) and not _extra_specifies_parallel(
+            extra_tokens
+        ):
+            cmd.extend(["-np", "1"])
 
         if extra_tokens:
             cmd.extend(extra_tokens)
@@ -519,9 +556,19 @@ def start_llama(config):
         with llama_log_lock:
             llama_log_lines.clear()
 
+        popen_env = None
+        if rpc and config.get("rpc_disable_cuda_graphs", True):
+            popen_env = os.environ.copy()
+            # 마스터 CUDA + 원격 RPC 그래프 이슈 완화 (원격은 worker.py rpc-server 쪽도 필요)
+            popen_env.setdefault("GGML_CUDA_DISABLE_GRAPHS", "1")
+
         try:
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1,
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                env=popen_env,
             )
             llama_proc = proc
             llama_state.update({
@@ -583,6 +630,97 @@ def check_llama_alive():
             })
 
 
+def build_version_audit_response():
+    """마스터 소프트웨어 스냅샷을 기준으로 워커와 비교."""
+    from software_info import LLAMA_BINARIES, PIP_PACKAGES, extract_llama_build_token
+
+    now = time.time()
+    with master_stats_lock:
+        master = dict(master_stats)
+    with workers_lock:
+        active = {}
+        for wid, s in workers.items():
+            if now - s.get("timestamp", 0) < WORKER_TIMEOUT:
+                active[wid] = s
+
+    ref = master.get("software") or {}
+    machines = [
+        {
+            "id": "master",
+            "role": "master",
+            "hostname": master.get("hostname"),
+            "ip": master.get("ip"),
+            "software": ref,
+        }
+    ]
+    for wid in sorted(active.keys()):
+        w = active[wid]
+        machines.append({
+            "id": wid,
+            "role": "worker",
+            "hostname": w.get("hostname"),
+            "ip": w.get("ip"),
+            "software": w.get("software") or {},
+        })
+
+    issues = []
+
+    def add_issue(severity, component, machine_label, expected, actual, hint=None):
+        row = {
+            "severity": severity,
+            "component": component,
+            "machine": machine_label,
+            "expected": expected,
+            "actual": actual,
+        }
+        if hint:
+            row["hint"] = hint
+        issues.append(row)
+
+    for m in machines:
+        if m["id"] == "master":
+            continue
+        label = m.get("hostname") or str(m.get("ip") or "") or m["id"][:16]
+        sw = m.get("software") or {}
+        err = sw.get("error")
+        if err:
+            add_issue("warning", "software_collect", label, "정상", err)
+
+        for pkg in PIP_PACKAGES:
+            a = (ref.get("packages") or {}).get(pkg)
+            b = (sw.get("packages") or {}).get(pkg)
+            if a and b and a != b:
+                add_issue("warning", f"pip:{pkg}", label, a, b)
+            elif a and not b:
+                add_issue("warning", f"pip:{pkg}", label, a, "(없음)")
+
+        py_a, py_b = ref.get("python"), sw.get("python")
+        if py_a and py_b and py_a != py_b:
+            add_issue("warning", "python", label, py_a, py_b)
+
+        for bin_name in LLAMA_BINARIES:
+            va = (ref.get("llama_binaries") or {}).get(bin_name, {}).get("version")
+            vb = (sw.get("llama_binaries") or {}).get(bin_name, {}).get("version")
+            ta, tb = extract_llama_build_token(va), extract_llama_build_token(vb)
+            if not ta and not tb:
+                continue
+            if ta and tb:
+                if ta != tb:
+                    add_issue("error", bin_name, label, va or "", vb or "", f"토큰 {ta} ≠ {tb}")
+            elif ta and not tb:
+                add_issue("error", bin_name, label, va or "", vb or "(없음)")
+            elif not ta and tb:
+                add_issue("warning", bin_name, label, "(마스터 미감지)", vb or "")
+
+    ok = not any(i.get("severity") == "error" for i in issues)
+    return {
+        "reference_hostname": master.get("hostname"),
+        "machines": machines,
+        "issues": issues,
+        "ok": ok,
+    }
+
+
 # ── Flask routes ───────────────────────────────
 
 @app.route("/")
@@ -631,6 +769,11 @@ def get_all_stats():
         "workers": active,
         "llama": dict(llama_state),
     })
+
+
+@app.route("/api/version-audit")
+def api_version_audit():
+    return jsonify(build_version_audit_response())
 
 
 @app.route("/api/models")
