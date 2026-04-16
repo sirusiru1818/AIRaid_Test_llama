@@ -90,6 +90,25 @@ def _extra_specifies_parallel(extra_tokens):
     return False
 
 
+def _extra_specifies_batch(extra_tokens):
+    """추가 인자에 -b / -ub 가 이미 있으면 True."""
+    for t in extra_tokens:
+        if t in ("-b", "--batch-size", "-ub", "--ubatch-size"):
+            return True
+        if t.startswith(("--batch-size=", "--ubatch-size=")):
+            return True
+    return False
+
+
+def _extra_specifies_kv_cache(extra_tokens):
+    for t in extra_tokens:
+        if t in ("-ctk", "--cache-type-k", "-ctv", "--cache-type-v"):
+            return True
+        if t.startswith(("--cache-type-k=", "--cache-type-v=")):
+            return True
+    return False
+
+
 # ── System info ────────────────────────────────
 
 def get_local_ip():
@@ -607,6 +626,16 @@ def start_llama(config):
         ctx = int(config.get("ctx_size", 4096))
         ngl = int(config.get("n_gpu_layers", -1))
 
+        extra = config.get("extra_args", "").strip()
+        extra_tokens = extra.split() if extra else []
+
+        rpc = config.get("rpc_workers", [])
+        # 원격 4GB 등 VRAM 한계 시 8192 ctx + 큰 배치가 rpc-server OOM/슬롯 초기화 크래시 유발
+        if rpc and config.get("rpc_cap_context", True):
+            cap = int(config.get("rpc_context_cap", 4096))
+            if ctx > cap:
+                ctx = cap
+
         cmd = [
             exe, "-m", model_path,
             "--host", "0.0.0.0",
@@ -619,15 +648,11 @@ def start_llama(config):
         if threads > 0:
             cmd.extend(["-t", str(threads)])
 
-        rpc = config.get("rpc_workers", [])
         if rpc:
             cmd.extend(["--rpc", ",".join(rpc)])
 
         if config.get("fit_disabled", True):
             cmd.extend(["-fit", "off"])
-
-        extra = config.get("extra_args", "").strip()
-        extra_tokens = extra.split() if extra else []
         # RPC 분산 시 빈 워밍업 런이 원격 rpc-server를 크래시시키는 경우가 많음
         # (ggml-rpc: recv failed / Remote RPC server crashed). 기본으로 건너뜀.
         if rpc and config.get("rpc_no_warmup", True) and "--no-warmup" not in extra_tokens:
@@ -643,6 +668,15 @@ def start_llama(config):
             extra_tokens
         ):
             cmd.extend(["-np", "1"])
+        if rpc and config.get("rpc_reduce_batch", True) and not _extra_specifies_batch(
+            extra_tokens
+        ):
+            cmd.extend(["-b", "1024", "-ub", "256"])
+        # KV를 q8로 줄이면 원격 VRAM 여유가 생김(품질 영향 가능). 문제 시 API에서 rpc_kv_cache_q8: false
+        if rpc and config.get("rpc_kv_cache_q8", True) and not _extra_specifies_kv_cache(
+            extra_tokens
+        ):
+            cmd.extend(["-ctk", "q8_0", "-ctv", "q8_0"])
 
         if extra_tokens:
             cmd.extend(extra_tokens)
