@@ -147,6 +147,14 @@ sudo ufw allow 5555/tcp
 sudo ufw allow 50052/tcp
 ```
 
+## CUDA: `PTX was compiled with an unsupported toolchain`
+
+`ggml-cuda.dll`이 **빌드된 CUDA 툴체인**과 PC에 설치된 **NVIDIA 드라이버**가 맞지 않을 때 납니다.
+
+1. **드라이버를 최신으로** 올립니다. [NVIDIA 드라이버 다운로드](https://www.nvidia.com/Download/index.aspx)에서 GTX 1650에 맞는 최신 Game Ready/Studio 드라이버 설치 후 재부팅.
+2. 그래도 동일하면, `start_master.bat` 등으로 **CUDA용 llama 바이너리를 다시 받거나**, [llama.cpp 릴리스](https://github.com/ggml-org/llama.cpp/releases)에서 **자신의 드라이버/CUDA와 맞는 빌드**로 교체합니다.
+3. 당장 GPU 없이 확인만 할 때는 **CPU 전용** 바이너리를 쓰거나, LLM 설정에서 **GPU 레이어 `-ngl` 을 `0`** 으로 두어 CPU로만 실행합니다.
+
 ## 종료 방법
 
 1. 대시보드에서 "서버 중지" 클릭
