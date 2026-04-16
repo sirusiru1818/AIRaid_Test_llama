@@ -702,10 +702,12 @@ def start_llama(config):
             llama_log_lines.clear()
 
         popen_env = None
-        if rpc and config.get("rpc_disable_cuda_graphs", True):
+        if rpc:
             popen_env = os.environ.copy()
-            # 마스터 CUDA + 원격 RPC 그래프 이슈 완화 (원격은 worker.py rpc-server 쪽도 필요)
-            popen_env.setdefault("GGML_CUDA_DISABLE_GRAPHS", "1")
+            if config.get("rpc_disable_cuda_graphs", True):
+                popen_env["GGML_CUDA_DISABLE_GRAPHS"] = "1"
+            if config.get("rpc_cuda_force_mmq", True):
+                popen_env["GGML_CUDA_FORCE_MMQ"] = "1"
 
         try:
             proc = subprocess.Popen(

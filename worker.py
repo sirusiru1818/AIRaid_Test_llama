@@ -182,6 +182,19 @@ def get_gpu_info():
 
 # ── RPC server management ──────────────────────
 
+def _rpc_stdout_drain(stream):
+    """PIPE 를 비우지 않으면 rpc-server 가 출력에 블록되어 RPC 가 멈출 수 있음."""
+    try:
+        for line in iter(stream.readline, b""):
+            if not line:
+                break
+            text = line.decode("utf-8", errors="replace").rstrip()
+            if text:
+                print(f"[rpc-server] {text}", flush=True)
+    except Exception:
+        pass
+
+
 def find_rpc_binary():
     names = {"rpc-server", "rpc-server.exe", "llama-rpc-server", "llama-rpc-server.exe"}
     for root, _dirs, files in os.walk(LLAMA_DIR):
@@ -206,14 +219,20 @@ def start_rpc(port):
         rpc_port = port
         try:
             rpc_env = os.environ.copy()
-            # RPC 서버 CUDA 그래프 누수/크래시 완화 — 마스터 llama-server와 동일 권장
-            rpc_env.setdefault("GGML_CUDA_DISABLE_GRAPHS", "1")
+            # setdefault 가 아니라 강제 — 사용자 환경에 그래프 켜짐이 남아 있으면 RPC 불안정
+            rpc_env["GGML_CUDA_DISABLE_GRAPHS"] = "1"
+            # 로그의 GTX1650(Turing, 텐서코어 없음) 권장 경로 — 커널/그래프 이슈 완화
+            rpc_env["GGML_CUDA_FORCE_MMQ"] = "1"
             rpc_proc = subprocess.Popen(
                 [exe, "--host", "0.0.0.0", "--port", str(port)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=rpc_env,
             )
+            if rpc_proc.stdout:
+                threading.Thread(
+                    target=_rpc_stdout_drain, args=(rpc_proc.stdout,), daemon=True
+                ).start()
             print(f"[RPC] rpc-server 시작됨 (port {port}, PID {rpc_proc.pid})")
         except Exception as e:
             print(f"[RPC 오류] {e}")
